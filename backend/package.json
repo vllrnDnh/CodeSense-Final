@@ -1,0 +1,40 @@
+{
+  "name": "codesense-backend",
+  "version": "1.0.0",
+  "description": "Intelligent C++ Static Analysis Engine for Novice Programmers",
+  "main": "dist src/server.js",
+  "scripts": {
+    "clean": "rimraf dist",
+    "build:parser": "peggy --format commonjs -o src/analysis/parser.js grammar/cpp.pegjs",
+    "build:ts": "tsc -p .",
+    "copy:parser": "if not exist dist\\analysis mkdir dist\\analysis && copy src\\analysis\\parser.js dist\\analysis\\parser.js",
+    "build": "npm run clean && npm run build:parser && npm run build:ts && npm run copy:parser",
+    "dev": "ts-node src/server.ts",
+    "start": "node dist src/server.js"
+  },
+  "keywords": [
+    "cpp",
+    "parser",
+    "static-analysis",
+    "education",
+    "gamification"
+  ],
+  "author": "CodeSense Team",
+  "license": "ISC",
+  "dependencies": {
+    "axios": "^1.13.4",
+    "body-parser": "^2.2.2",
+    "cors": "^2.8.6",
+    "express": "^5.2.1",
+    "peggy": "^3.0.2"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/node": "^20.11.0",
+    "nodemon": "^3.0.3",
+    "rimraf": "^5.0.5",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3"
+  }
+}

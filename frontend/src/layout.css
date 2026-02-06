@@ -1,0 +1,339 @@
+/* src/layout.css */
+:root {
+  --wireframe-yellow: #ffc107;
+  --bg-darker: #121212;
+  --bg-panel: #1e1e1e;
+  --border-muted: #333;
+  --cyan-accent: #00bcd4; /* For Symbol Headers */
+  --orange-accent: #ffa726; /* For Symbol Data */
+}
+
+html, body, #root {
+  margin: 0; padding: 0; height: 100%;
+  background-color: var(--bg-darker);
+  font-family: 'Segoe UI', sans-serif;
+  color: white; overflow: hidden;
+}
+
+.app-container { display: flex; flex-direction: column; height: 100vh; }
+
+/* HEADER */
+.app-header {
+  height: 55px; background-color: #1e1e1e;
+  border-bottom: 2px solid var(--wireframe-yellow);
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 20px;
+}
+.brand-text { font-weight: bold; font-size: 1.2rem; }
+.exit-btn { background: none; border: none; color: white; font-size: 1.5rem; cursor: pointer; }
+
+/* LAYOUT GRID */
+.main-layout {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 450px 1fr;
+  gap: 12px;
+  padding: 12px;
+  background-color: #000;
+  overflow: hidden; 
+}
+
+.left-column { display: flex; flex-direction: column; gap: 12px; height: 100%; overflow: hidden; }
+.right-column { border: 1px solid var(--border-muted); display: flex; flex-direction: column; background: #121212; }
+
+/* SECTION STYLING */
+.section-title {
+  background: var(--bg-panel); color: #ccc;
+  padding: 6px 12px; font-size: 0.75rem; font-weight: bold;
+  border-bottom: 1px solid var(--border-muted);
+}
+
+.editor-section {
+  flex: 1.5; border: 1px solid var(--border-muted);
+  display: flex; flex-direction: column; background: var(--bg-panel);
+  overflow: hidden;
+}
+
+.editor-container { flex: 1; overflow: hidden; }
+
+.action-bar { padding: 10px; display: flex; justify-content: center; }
+.analyze-btn {
+  width: 90%; padding: 10px; border-radius: 20px;
+  border: none; font-weight: bold; cursor: pointer;
+  background-color: #fff; color: #000;
+}
+
+/* TABS SECTION */
+.tabs-section {
+  flex: 1; 
+  border: 1px solid var(--border-muted);
+  display: flex; 
+  flex-direction: column; 
+  background: var(--bg-panel);
+  overflow: hidden; 
+}
+
+.tab-headers { display: flex; background: #000; border-bottom: 1px solid var(--border-muted); flex-shrink: 0; }
+.tab-link {
+  background: none; border: none; color: #777;
+  padding: 8px 12px; font-size: 0.7rem; cursor: pointer;
+  border-right: 1px solid var(--border-muted);
+}
+.tab-link.active { background: var(--bg-panel); color: var(--wireframe-yellow); }
+
+.tab-content { 
+  flex: 1; 
+  position: relative; 
+  overflow: hidden; 
+}
+
+/* UNIVERSAL SCROLLABLE VIEW FOR TABS */
+.tab-view-scroll {
+  position: absolute;
+  top: 0; left: 0; right: 0; bottom: 0;
+  overflow-y: auto !important;
+  padding: 15px;
+}
+
+.visualizer-container { flex: 1; position: relative; }
+.placeholder-msg { display: flex; height: 100%; align-items: center; justify-content: center; color: #444; }
+
+/* Lexical Tab Internal Layout */
+.lexical-tab-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.token-integration {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  gap: 15px;
+}
+
+.token-action-footer {
+  margin-top: auto;
+  padding: 10px 0;
+  border-top: 1px solid #333;
+  display: flex;
+  justify-content: center;
+}
+
+.view-all-tokens-btn {
+  background: rgba(0, 122, 204, 0.1);
+  border: 1px solid #007acc;
+  color: #007acc;
+  padding: 8px 16px;
+  font-size: 0.75rem;
+  font-family: 'Courier New', monospace;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: all 0.2s;
+}
+
+.view-all-tokens-btn:hover { background: #007acc; color: white; }
+.log-entry { margin-bottom: 5px; color: #ccc; font-size: 13px; }
+
+.token-stats {
+  margin-top: 0 !important;
+  background: transparent !important;
+  padding: 0 !important;
+  box-shadow: none !important;
+}
+
+/* Syntactic View Styles */
+.syntactic-tab-view {
+  background-color: #1a1a1a;
+}
+
+.ast-json-code {
+  margin: 0;
+  color: var(--wireframe-yellow);
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 0.85rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-wrap: break-word; 
+}
+
+/* SYMBOLS TABLE STYLING */
+.symbol-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.symbol-table th {
+  text-align: left;
+  color: var(--cyan-accent);
+  font-size: 0.8rem;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #333;
+}
+
+.symbol-table td {
+  padding: 10px 0;
+  font-size: 0.85rem;
+  border-bottom: 1px solid #252526;
+}
+
+.symbol-type { color: var(--orange-accent); }
+.symbol-name { color: var(--orange-accent); text-align: center; }
+.symbol-line { color: var(--cyan-accent); text-align: right; }
+
+/* ADDED: MATH TABLE STYLING for Symbolic Execution */
+.math-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.math-table th {
+  text-align: left;
+  color: var(--cyan-accent);
+  font-size: 0.8rem;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #333;
+}
+
+.math-table td {
+  padding: 12px 0;
+  font-size: 0.85rem;
+  border-bottom: 1px solid #252526;
+  font-family: 'JetBrains Mono', 'Courier New', monospace;
+}
+
+.math-expr {
+  color: #ccc;
+}
+
+.math-value {
+  color: var(--orange-accent);
+  text-align: right;
+  font-weight: bold;
+}
+
+/* Math Error Styles */
+.math-error-container {
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+}
+
+.math-error-title {
+  color: #ff4444;
+  font-size: 0.9rem;
+  margin: 0;
+  border-bottom: 1px solid #ff4444;
+  padding-bottom: 5px;
+  font-weight: bold;
+}
+
+.math-error-card {
+  background: rgba(255, 68, 68, 0.1);
+  border-left: 4px solid #ff4444;
+  padding: 12px;
+  border-radius: 4px;
+}
+
+.math-error-loc {
+  color: #ff4444;
+  font-weight: bold;
+  font-size: 0.8rem;
+  margin-bottom: 5px;
+}
+
+.math-error-msg {
+  color: #eee;
+  font-size: 0.85rem;
+  line-height: 1.4;
+}
+
+.math-error-trace {
+  margin-top: 8px;
+  font-size: 0.75rem;
+  color: #ffa726;
+}
+
+/* Standard Math Table Styles */
+.math-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.math-table th {
+  text-align: left;
+  color: var(--cyan-accent);
+  font-size: 0.8rem;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #333;
+}
+
+.math-table td {
+  padding: 12px 0;
+  font-size: 0.85rem;
+  border-bottom: 1px solid #252526;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.math-expr { color: #ccc; }
+.math-value { color: var(--orange-accent); text-align: right; font-weight: bold; }
+
+/* CUSTOM SCROLLBAR */
+.tab-view-scroll::-webkit-scrollbar,
+.syntactic-tab-view::-webkit-scrollbar {
+  width: 8px;
+}
+.tab-view-scroll::-webkit-scrollbar-track,
+.syntactic-tab-view::-webkit-scrollbar-track {
+  background: #121212;
+}
+.tab-view-scroll::-webkit-scrollbar-thumb,
+.syntactic-tab-view::-webkit-scrollbar-thumb {
+  background: #444;
+  border-radius: 4px;
+}
+.tab-view-scroll::-webkit-scrollbar-thumb:hover,
+.syntactic-tab-view::-webkit-scrollbar-thumb:hover {
+  background: var(--wireframe-yellow);
+}
+
+.placeholder-text {
+  color: #555; font-size: 0.8rem; text-align: center; margin-top: 20px;
+}
+
+/* Mentor Tooltip Styling */
+.mentor-tooltip {
+  background: rgba(30, 30, 30, 0.95);
+  border: 1px solid #ffa726; /* Tutor orange accent */
+  border-radius: 8px;
+  padding: 12px;
+  max-width: 280px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.8);
+  backdrop-filter: blur(4px);
+  pointer-events: none; /* Prevents flickering when mouse moves */
+  z-index: 9999;
+  animation: mentorFadeIn 0.2s ease-out;
+}
+
+.tooltip-header {
+  color: #ffa726;
+  font-weight: 800;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin-bottom: 8px;
+  border-bottom: 1px solid rgba(255, 167, 38, 0.3);
+  padding-bottom: 4px;
+}
+
+.tooltip-body {
+  color: #ffffff;
+  font-size: 13px;
+  line-height: 1.5;
+  font-family: 'Inter', sans-serif;
+}
+
+@keyframes mentorFadeIn {
+  from { opacity: 0; transform: scale(0.95); }
+  to { opacity: 1; transform: scale(1); }
+}
