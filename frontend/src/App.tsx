@@ -15,10 +15,9 @@ using namespace std;
 int main() {
     int hp = 100;
     int damage = 0;
-    
+    cout<<"Hello,World!";
     // Safety Risk: Division by Zero
     int risk = hp / damage; 
-
     while (hp > 0) {
         hp = hp - 10;
     }
