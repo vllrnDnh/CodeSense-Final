@@ -194,6 +194,15 @@ export class CFGGenerator {
 
   private visit(node: ASTNode, current: ControlFlowNode, exit: ControlFlowNode): ControlFlowNode {
     if (!node) return current;
+
+    // Explicitly handle I/O statements to satisfy the compiler and ensure execution
+    if (node.type === 'CoutStatement') {
+    return this.visitCoutStatement(node, current);
+    }
+    if (node.type === 'CinStatement') {
+    return this.visitCinStatement(node, current);
+    }
+
     const methodName = `visit${node.type}`;
     if ((this as any)[methodName]) {
         return (this as any)[methodName](node, current, exit);
@@ -239,6 +248,20 @@ export class CFGGenerator {
     }
     return merge;
   }
+
+  private visitCoutStatement(node: any, current: ControlFlowNode): ControlFlowNode {
+    // Pass 'node' as the 5th argument so the Mentor Translator can read it
+    const step = this.createNode('process', 'Output (cout)', 'cout << ...', node.line, node);
+    this.connect(current, step);
+    return step;
+}
+
+private visitCinStatement(node: any, current: ControlFlowNode): ControlFlowNode {
+    // Create the node and pass 'node' so the translator can extract the targets
+    const step = this.createNode('process', 'Input (cin)', 'cin >> ...', node.line, node);
+    this.connect(current, step);
+    return step;
+}
 
   private visitDoWhileLoop(node: DoWhileLoopNode, current: ControlFlowNode, exit: ControlFlowNode): ControlFlowNode {
     const loopStart = this.createNode('process', 'Do-While Start', '', node.line, node);

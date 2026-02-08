@@ -46,6 +46,15 @@ export class Translator {
 
   private visit(node: ASTNode | null | string): void {
     if (!node || typeof node === 'string') return;
+    
+    // Explicitly call the I/O translators
+    if (node.type === 'CoutStatement') {
+        return this.visitCoutStatement(node);
+    }
+    if (node.type === 'CinStatement') {
+        return this.visitCinStatement(node);
+    }
+
     const methodName = `visit${node.type}` as keyof this;
     if (typeof this[methodName] === 'function') {
       (this[methodName] as any).call(this, node);
@@ -106,6 +115,34 @@ export class Translator {
     this.explanations.push(msg + ".");
   }
 
+  private visitCoutStatement(node: any): void {
+  // Use 'values' to support chained output like cout << x << y;
+  const outputs = node.values 
+    ? node.values.map((expr: any) => this.formatExpr(expr)).join(', ')
+    : "information";
+
+  this.explanations.push(`🖥️ **Screen:** Show the current value of **${outputs}** to the user.`);
+  
+  if (node.values) {
+    node.values.forEach((expr: any) => {
+      if (expr.type === 'Identifier') {
+        const name = this.cleanName(expr.name);
+        this.explanations.push(`   🔍 I am grabbing the data currently stored in the variable **'${name}'** to display it.`);
+      }
+    });
+  }
+}
+
+  private visitCinStatement(node: any): void {
+  // Use 'targets' as defined in types/index.ts
+  const targetNames = node.targets 
+    ? node.targets.map((t: any) => typeof t === 'string' ? t : this.cleanName(t.name)).join(' and ')
+    : "a variable";
+  
+  this.explanations.push(`⌨️ **Keyboard:** Wait for the user to type a value and save it directly into the **'${targetNames}'** variable.`);
+  this.explanations.push(`   📝 **Note:** This will overwrite whatever was previously stored in **'${targetNames}'**.`);
+}
+
   private visitAssignment(node: AssignmentNode): void {
     const target = typeof node.target === 'string' ? this.cleanName(node.target) : 'a slot in an array';
     this.explanations.push(`📝 **Update:** Change the value inside **'${target}'** to **${this.formatExpr(node.value)}**.`);
@@ -151,13 +188,6 @@ export class Translator {
     this.explanations.push(`📤 **Done:** Exit this task and ${valMsg}.`);
   }
 
-  private visitCoutStatement(node: any): void {
-     this.explanations.push(`🖥️ **Screen:** Show some information to the user on the computer screen.`);
-  }
-
-  private visitCinStatement(node: any): void {
-     this.explanations.push(`⌨️ **Keyboard:** Wait for the user to type something and save it.`);
-  }
 
   // =========================================================================
   //  Helpers (Synchronized with PEG.js Node Structure)

@@ -187,6 +187,8 @@ export const FlowGraph: React.FC<Props> = ({ cfg, safetyChecks, onNodeClick }) =
   const [nodes, setNodes] = useState<Node<ExtendedNodeData>[]>([]);
   const [edges, setEdges] = useState<Edge[]>([]);
   
+  const [isInteractive, setIsInteractive] = useState(true);
+
   // Mentor Tooltip State
   const [hoverInfo, setHoverInfo] = useState<string | null>(null);
   const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
@@ -330,19 +332,19 @@ export const FlowGraph: React.FC<Props> = ({ cfg, safetyChecks, onNodeClick }) =
           duration: 800
         }}
         colorMode="dark"
-        nodesDraggable={true}
+        nodesDraggable={isInteractive}
         nodesConnectable={false}
-        nodesFocusable={true}
+        nodesFocusable={isInteractive}
         edgesFocusable={false}
-        panOnDrag={true}
+        panOnDrag={isInteractive}
         panOnScroll={false}
-        selectionOnDrag={false}
+        selectionOnDrag={isInteractive}
         selectionKeyCode={null}
         multiSelectionKeyCode="Shift"
         deleteKeyCode={null}
-        zoomOnScroll={true}
-        zoomOnPinch={true}
-        zoomOnDoubleClick={true}
+        zoomOnScroll={isInteractive}
+        zoomOnPinch={isInteractive}
+        zoomOnDoubleClick={isInteractive}
         minZoom={0.05}
         maxZoom={2}
         defaultEdgeOptions={{
@@ -356,12 +358,14 @@ export const FlowGraph: React.FC<Props> = ({ cfg, safetyChecks, onNodeClick }) =
           style={{ opacity: 0.4 }}
         />
         <Controls 
-          position="bottom-right"
-          style={{
-            background: 'rgba(13, 17, 23, 0.9)',
-            border: '1px solid #30363d',
-            borderRadius: '8px'
-          }}
+          showInteractive={true} 
+  onInteractiveChange={(interactive) => setIsInteractive(interactive)}
+  position="bottom-right"
+  style={{
+    background: 'rgba(13, 17, 23, 0.9)',
+    border: '1px solid #30363d',
+    borderRadius: '8px'
+  }}
         />
       </ReactFlow>
 
