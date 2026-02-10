@@ -28,8 +28,8 @@ const TOKEN_PATTERNS: Array<{ type: Token['type']; pattern: RegExp }> = [
   
   // 5. Numeric Literals (Including suffixes like f, f, U, L)
   { type: 'Literal', pattern: /^0x[0-9a-fA-F]+/ }, 
-  { type: 'Literal', pattern: /^[0-9]+\.[0-9]+([eE][+-]?[0-9]+)?[fF]?/ }, 
-  { type: 'Literal', pattern: /^[0-9]+([eE][+-]?[0-9]+)?[uUlL]{0,2}/ }, 
+  { type: 'Literal', pattern: /^[0-9]+\.[0-9]+([eE][+-]?[0-9]+)?[fF]?/ },
+  { type: 'Literal', pattern: /^[0-9]+([eE][+-]?[0-9]+)?[uUlL]{0,3}/ },
   
   // 6. Character and String Literals
   { type: 'Literal', pattern: /^'([^'\\]|\\.)*'/ }, 

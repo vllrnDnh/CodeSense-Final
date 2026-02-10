@@ -1,63 +1,77 @@
-import React from 'react';
+import React, { useState } from 'react';
+import Editor from '@monaco-editor/react';
+import type { OnMount } from '@monaco-editor/react';
 
 interface CodeEditorProps {
   code: string;
   onChange: (value: string) => void;
+  // This fix solves the "Property does not exist on type IntrinsicAttributes" error
+  onEditorMount?: (editor: any) => void; 
 }
 
-export const CodeEditor: React.FC<CodeEditorProps> = ({ code, onChange }) => {
-  
-  const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    onChange(e.target.value);
+export const CodeEditor: React.FC<CodeEditorProps> = ({ code, onChange, onEditorMount }) => {
+  const [theme, setTheme] = useState<'vs-dark' | 'light'>('vs-dark');
+
+  const handleEditorChange = (value: string | undefined) => {
+    onChange(value || '');
   };
 
-  // Calculate line numbers based on newlines
-  const lineNumbers = code.split('\n').map((_, i) => i + 1).join('\n');
+  const toggleTheme = () => {
+    setTheme(prev => (prev === 'vs-dark' ? 'light' : 'vs-dark'));
+  };
+
+  /**
+   * handleOnMount uses the OnMount type from Monaco to solve 
+   * the "Parameter implicitly has an any type" error.
+   */
+  const handleOnMount: OnMount = (editor) => {
+    if (onEditorMount) {
+      onEditorMount(editor);
+    }
+  };
 
   return (
-    <div style={{ 
-      display: 'flex', 
-      height: '100%', 
-      width: '100%', 
-      backgroundColor: '#1e1e1e', 
-      color: '#d4d4d4', 
-      overflow: 'hidden' 
-    }}>
-      {/* Line Numbers Gutter */}
+    <div style={{ height: '100%', width: '100%', display: 'flex', flexDirection: 'column' }}>
+      {/* Mini-toolbar for the toggle */}
       <div style={{ 
-        width: '40px', 
-        backgroundColor: '#252526', 
-        color: '#858585', 
-        textAlign: 'right', 
-        paddingRight: '10px', 
-        paddingTop: '10px', 
-        borderRight: '1px solid #333', 
-        userSelect: 'none', 
-        lineHeight: '1.5' 
+        padding: '5px 10px', 
+        background: theme === 'vs-dark' ? '#1e1e1e' : '#f3f3f3',
+        borderBottom: '1px solid #333',
+        display: 'flex',
+        justifyContent: 'flex-end',
+        flexShrink: 0
       }}>
-        <pre style={{ margin: 0 }}>{lineNumbers}</pre>
+        <button 
+          onClick={toggleTheme}
+          style={{
+            fontSize: '11px',
+            padding: '2px 8px',
+            cursor: 'pointer',
+            borderRadius: '4px',
+            border: '1px solid #64b5f6',
+            background: 'transparent',
+            color: '#64b5f6'
+          }}
+        >
+          {theme === 'vs-dark' ? '☀ Light Mode' : '🌙 Dark Mode'}
+        </button>
       </div>
 
-      {/* Text Area */}
-      <textarea
-        style={{
-           flex: 1,
-           height: '100%',
-           width: '100%',
-           backgroundColor: 'transparent',
-           border: 'none',
-           resize: 'none',
-           padding: '10px',
-           outline: 'none',
-           color: 'inherit',
-           fontFamily: 'Consolas, Monaco, monospace',
-           lineHeight: '1.5'
-        }}
+      <Editor
+        height="100%"
+        defaultLanguage="cpp"
+        theme={theme}
         value={code}
-        onChange={handleChange}
-        spellCheck={false}
-        autoCapitalize="off"
-        autoComplete="off"
+        onChange={handleEditorChange}
+        onMount={handleOnMount} // Captures the instance for the SandboxPage
+        options={{
+          fontSize: 14,
+          minimap: { enabled: false },
+          automaticLayout: true,
+          scrollBeyondLastLine: false,
+          lineNumbers: 'on',
+          padding: { top: 10 }
+        }}
       />
     </div>
   );

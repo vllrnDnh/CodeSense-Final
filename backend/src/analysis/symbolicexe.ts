@@ -335,44 +335,39 @@ private visitAssignment(node: ASTNode): SymbolicValue {
   //  MISSING VISITORS (Fixes Unused Import Warnings)
   // ==========================================================================
 
-  private visitWhileLoop(node: ASTNode): SymbolicValue {
+ private visitWhileLoop(node: ASTNode): SymbolicValue {
     const loopNode = node as WhileLoopNode;
     
-    // 1. Evaluate condition for dead code
+    // 1. Evaluate condition for dead code (e.g., while(0))
     const cond = this.visit(loopNode.condition);
     if (cond.type === 'concrete' && cond.value === 0) return { type: 'unknown' };
 
-    // 2. Boundary Simulation (The Gatekeeper)
+    // 2. Normalize the body IMMEDIATELY
+    // This makes bodyStatements available to both the Gatekeeper and Normal Execution
+    let bodyStatements: ASTNode[] = [];
+    if (Array.isArray(loopNode.body)) {
+        bodyStatements = loopNode.body;
+    } else if ((loopNode.body as any).type === 'Block') {
+        bodyStatements = (loopNode.body as any).statements || [];
+    } else {
+        bodyStatements = [loopNode.body as ASTNode];
+    }
+
+    // 3. Boundary Simulation (The Gatekeeper)
     const condStr = this.expressionToString(loopNode.condition);
-    
-    // Use the same resilient logic as visitForLoop
     const isBoundaryHit = />=|!=|>/.test(condStr) && /0/.test(condStr);
     
     if (isBoundaryHit) {
         const loopVars = this.extractVariables(loopNode.condition);
-        
-        // Normalize the body (handle Block nodes vs Arrays)
-        let bodyStatements: ASTNode[] = [];
-        if (Array.isArray(loopNode.body)) {
-            bodyStatements = loopNode.body;
-        } else if ((loopNode.body as any).type === 'Block') {
-            bodyStatements = (loopNode.body as any).statements || [];
-        } else {
-            bodyStatements = [loopNode.body as ASTNode];
-        }
-
         loopVars.forEach(v => {
-            // Trigger the deep recursive scanner
+            // Now bodyStatements is safely in scope
             this.checkLoopBodyForZeroRisk(bodyStatements, v);
         });
     }
 
-    // 3. Normal Execution
-    if (Array.isArray(loopNode.body)) {
-        loopNode.body.forEach(stmt => this.visit(stmt));
-    } else {
-        this.visit(loopNode.body);
-    }
+    // 4. Normal Execution
+    // We can now use the normalized array for a cleaner loop
+    bodyStatements.forEach(stmt => this.visit(stmt));
     
     return { type: 'unknown' };
 }

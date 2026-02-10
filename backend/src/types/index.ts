@@ -147,6 +147,7 @@ export interface VariableDeclNode extends BaseNode {
   // FIX: Valid AST uses Nodes (e.g., [5] is an IntegerNode), not raw numbers
   dimensions?: ASTNode[]; 
   value?: ASTNode;
+  modifiers?: string[];
 }
 
 // New: Distinct from VariableDecl to handle default values in function headers

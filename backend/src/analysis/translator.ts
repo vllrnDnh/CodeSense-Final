@@ -106,13 +106,27 @@ export class Translator {
   }
 
   private visitVariableDecl(node: VariableDeclNode): void {
-    // FIX: Clean the name and ensure it matches the test: "Declare a [type] variable named '[name]'"
     const name = this.cleanName(node.name);
-    let msg = `📦 **Storage:** Declare a ${node.varType} variable named '${name}'`;
+    
+    // 1. Check if "const" exists in the modifiers array we added to the grammar
+    const isConstant = node.modifiers && node.modifiers.includes('const');
+    
+    // 2. Select the correct metaphor based on the modifier
+    const icon = isConstant ? "❄️ **Frozen Value:**" : "📦 **Storage:**";
+    const action = isConstant ? "Create a permanent" : "Declare a";
+    
+    let msg = `${icon} ${action} ${node.varType} variable named '${name}'`;
+    
     if (node.value) {
       msg += ` and initialize it with ${this.formatExpr(node.value)}`;
     }
+    
     this.explanations.push(msg + ".");
+
+    // 3. Add the specific metaphor explanation for the "Constant Storage" test
+    if (isConstant) {
+      this.explanations.push(`   🔒 **Note:** Because this is 'const', its value is frozen and cannot be changed later.`);
+    }
   }
 
   private visitCoutStatement(node: any): void {

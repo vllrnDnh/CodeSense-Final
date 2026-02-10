@@ -200,9 +200,10 @@ LoopControlStatement
     }
 
 VariableDeclaration
-  = type:Type __ name:Identifier dims:(_ "[" _ Expression _ "]")* value:(_ "=" _ Expression)? _ ";" _ {
+  = mods:TypeModifier* _ type:Type __ name:Identifier dims:(_ "[" _ Expression _ "]")* value:(_ "=" _ Expression)? _ ";" _ {
       return {
         type: 'VariableDecl',
+        modifiers: mods, 
         varType: type,
         name: name,
         dimensions: dims.map(d => d[3]),
@@ -383,6 +384,8 @@ Unary
   / "sizeof" _ "(" _ expr:Expression _ ")" { 
       return { type: 'SizeofExpression', value: expr, ...loc() };
     } 
+  / "-" _ operand:Unary { return { type: 'UnaryOp', operator: '-', operand, ...loc() }; } 
+  / "!" _ operand:Unary { return { type: 'UnaryOp', operator: '!', operand, ...loc() }; } 
   / "*" _ operand:Unary { return { type: 'Dereference', operand, ...loc() }; }
   / "&" _ operand:Unary { return { type: 'AddressOf', operand, ...loc() }; }
   / "++" _ name:Identifier { return { type: 'PreIncrement', operand: name, ...loc() }; }
@@ -430,13 +433,15 @@ BooleanLiteral
     }
 
 Integer
-  = value:$[0-9]+ {
-      return { type: 'Integer', value: parseInt(value, 10), ...loc() };
+  = sign:"-"? value:$[0-9]+ {
+      const val = parseInt(value, 10);
+      return { type: 'Integer', value: sign ? -val : val, ...loc() };
     }
 
 Float
-  = value:$([0-9]+ "." [0-9]+) {
-      return { type: 'Float', value: parseFloat(value), ...loc() };
+  = sign:"-"? value:$([0-9]+ "." [0-9]+) {
+      const val = parseFloat(value);
+      return { type: 'Float', value: sign ? -val : val, ...loc() };
     }
 
 Char
@@ -449,6 +454,9 @@ String
       return { type: 'String', value: chars, ...loc() };
     }
 
+// ============================================================================
+// Types
+// ============================================================================
 Type
   = mods:TypeModifier* _ base:BaseType ptr:(_ ("*" / "&"))* {
       // Combine modifiers, base, and pointers into a single string like "const int*"
@@ -456,20 +464,29 @@ Type
     }
 
 BaseType
-  = "long" _ "long" { return "long long"; } // Handle multi-word types
+  = "long" _ "long" { return "long long"; } 
   / "long" _ "double" { return "long double"; }
   / "unsigned" _ "int" { return "unsigned int"; }
-  / ("int" / "float" / "double" / "char" / "bool" / "void" / "string" / "auto")
+  / ("int" / "float" / "double" / "char" / "bool" / "void" / "string" / "auto" / "typename" / "class" / "struct" / "enum")
 
 TypeModifier
-  = ("const" / "static" / "extern" / "volatile" / "unsigned" / "signed")
+  = ("const" / "static" / "extern" / "volatile" / "unsigned" / "signed" / "inline" / "virtual" / "public" / "private" / "protected" / "override" / "final")
 
 // ============================================================================
-// Reserved Keywords
+// Reserved Keywords (Sync with Lexer)
 // ============================================================================
 
 ReservedWord
-  = ("if" / "else" / "while" / "for" / "return" / "int" / "float" / "double" / "char" / "bool" / "void" / "using" / "namespace" / "include" / "auto" / "const" / "static" / "extern" / "unsigned" / "signed" / "sizeof" / "switch" / "case" / "default" / "break" / "continue" / "do" / "true" / "false") ![a-zA-Z0-9_]
+  = (
+      "if" / "else" / "while" / "for" / "return" / "int" / "float" / "double" / 
+      "char" / "bool" / "void" / "using" / "namespace" / "auto" / "const" / 
+      "static" / "extern" / "unsigned" / "signed" / "sizeof" / "switch" / 
+      "case" / "default" / "break" / "continue" / "do" / "long" / "string" / 
+      "volatile" / "inline" / "virtual" / "public" / "private" / "protected" / 
+      "class" / "struct" / "enum" / "typedef" / "typename" / "template" / 
+      "this" / "new" / "delete" / "nullptr" / "try" / "catch" / "throw" / 
+      "override" / "final" / "true" / "false"
+    ) ![a-zA-Z0-9_]
 
 // ============================================================================
 // Whitespace & Comments

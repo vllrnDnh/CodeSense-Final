@@ -22,10 +22,12 @@
   "author": "CodeSense Team",
   "license": "ISC",
   "dependencies": {
+    "@monaco-editor/react": "^4.7.0",
     "axios": "^1.13.4",
     "body-parser": "^2.2.2",
     "cors": "^2.8.6",
     "express": "^5.2.1",
+    "firebase": "^12.9.0",
     "peggy": "^3.0.2"
   },
   "devDependencies": {

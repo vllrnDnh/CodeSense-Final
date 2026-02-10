@@ -31,12 +31,13 @@ router.post('/analyze', (req, res) => {
                 errors: lexResult.errors.map(err => ({ ...err, type: 'lexical', severity: 'error' })),
                 cognitiveComplexity: 0,
                 safetyChecks: [],
-                cfg: [],
+                cfg: { nodes: [], edges: [] },
+                symbolicExecution: [],
                 explanations: ["❌ **Status:** Lexical Analysis Failed."]
             });
         }
 
-        // PHASE 1: Syntactic Analysis
+        // PHASE 2: Syntactic Analysis
         ast = parser.parse(sourceCode);
         
         // ====================================================================
@@ -86,13 +87,14 @@ router.post('/analyze', (req, res) => {
                 symbolTable: {},
                 safetyChecks: [],
                 cfg: { nodes: [], edges: [] },
+                symbolicExecution: [],
                 cognitiveComplexity: 0,
                 explanations: ["❌ **Status:** Strict Dependency Check Failed."],
                 errors: strictErrors.map(err => ({ ...err, type: 'semantic' }))
             });
         }
 
-        // PHASE 2: Semantic Analysis
+        // PHASE 3: Semantic Analysis
         console.log("--- Semantic Phase ---");
         const typeChecker = new TypeChecker();
         const typeResult = typeChecker.check(ast);
@@ -107,52 +109,60 @@ router.post('/analyze', (req, res) => {
                 symbolTable: typeResult.symbolTable,
                 safetyChecks: [],
                 cfg: { nodes: [], edges: [] },
+                symbolicExecution: [],
                 cognitiveComplexity: 0,
                 explanations: ["❌ **Status:** Semantic Analysis Failed"],
                 errors: typeResult.errors
             });
         }
 
-        // PHASE 3: Logic, Safety, and Mentor Translation
-console.log("--- Symbolic Execution Phase ---");
-const executor = new SymbolicExecutor(typeResult.symbolTable);
-const safetyChecks = executor.execute(ast);
+        // PHASE 4: Logic, Safety, and Control Flow
+        console.log("--- Logic & Safety Phase ---");
+        
+        // Symbolic Execution (catches division by zero, negative indices, etc.)
+        const executor = new SymbolicExecutor(typeResult.symbolTable);
+        const safetyChecks = executor.execute(ast);
+        
+        // Generate Control Flow Graph
+        const cfgGenerator = new CFGGenerator();
+        const cfg = cfgGenerator.generate(ast);
+        console.log("✅ CFG Generated with", cfg.nodes?.length || 0, "nodes");
+        
+        // Generate Mentor Explanations
+        const translator = new Translator();
+        const mentorExplanations = translator.translate(ast);
+        
+        // Calculate Complexity Score
+        const scorer = new CognitiveComplexity();
+        const score = scorer.calculate(ast);
+        
+        // Gamification Rewards
+        const gameEngine = new GameEngine();
+        const reward = gameEngine.calculateReward({ 
+            cognitiveComplexity: score, 
+            errors: [], 
+            safetyChecks: safetyChecks 
+        } as any, req.body.hintsUsed || 0);
 
-// Generate Mentor Explanations (Translates AST to student-friendly metaphors)
-const translator = new Translator();
-const mentorExplanations = translator.translate(ast);
-
-const cfgGenerator = new CFGGenerator();
-const cfg = cfgGenerator.generate(ast);
-
-const scorer = new CognitiveComplexity();
-const score = scorer.calculate(ast);
-
-const gameEngine = new GameEngine();
-const hintsUsed = req.body.hintsUsed || 0; 
-const reward = gameEngine.calculateReward({ 
-    cognitiveComplexity: score, 
-    errors: [], 
-    safetyChecks: safetyChecks 
-} as any, hintsUsed);
-
-// FINAL RESPONSE: Packaged for 24/24 Success
-res.json({
-    success: true, // MUST be true for the test runner to validate logic risks
-    tokens: lexResult.tokens, 
-    ast: ast,
-    symbolTable: typeResult.symbolTable,
-    safetyChecks: safetyChecks, // Contains the Array and Zero-risk issues
-    cfg: cfg, 
-    cognitiveComplexity: score, 
-    explanations: mentorExplanations,// Contains the "Storage" and "Choice" metaphors
-    errors: [], 
-    gamification: {
-        xpEarned: reward.xp,
-        qualityBonus: reward.bonus,
-        levelTitle: gameEngine.getLevelTitle(Math.floor(reward.xp / 100) + 1)
-    }
-});
+        // COMPLETE RESPONSE WITH ALL FIELDS
+        console.log("✅ Analysis Complete - Success!");
+        res.json({
+            success: true,
+            tokens: lexResult.tokens,
+            ast: ast,
+            symbolTable: typeResult.symbolTable,
+            safetyChecks: safetyChecks,
+            cfg: cfg,
+            symbolicExecution: [], // Not implemented in SymbolicExecutor yet
+            cognitiveComplexity: score,
+            explanations: mentorExplanations,
+            gamification: {
+                xpEarned: reward.xp,
+                qualityBonus: reward.bonus,
+                levelTitle: gameEngine.getLevelTitle(Math.floor(reward.xp / 100) + 1)
+            },
+            errors: [] // No errors on success
+        });
 
     } catch (e: any) {
         console.log("🔥 Syntax/Runtime Crash:", e.message);
@@ -173,6 +183,7 @@ res.json({
             cognitiveComplexity: 0,
             safetyChecks: [],
             cfg: { nodes: [], edges: [] },
+            symbolicExecution: [],
             explanations: ["❌ **Status:** Syntax Error Detected."]
         });
     }
