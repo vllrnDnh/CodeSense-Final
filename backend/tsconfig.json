@@ -26,8 +26,8 @@
   },
   "include": [
     "src/**/*",
-    "..shared/**/*"
-, "../frontend/src/services/firebase.ts"  ],
+   "../shared/**/*",
+ "../frontend/src/services/firebase.ts"  ],
   "exclude": [
     "node_modules",
     "dist"
