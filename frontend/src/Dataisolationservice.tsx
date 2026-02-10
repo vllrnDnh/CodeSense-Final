@@ -12,7 +12,7 @@
 export class DataIsolationService {
   private static readonly GUEST_PREFIX = 'guest_';
   private static readonly USER_PREFIX = 'user_';
-  private static readonly PROGRESS_PREFIX = 'progress_';
+  //private static readonly PROGRESS_PREFIX = 'progress_';
   private static readonly SANDBOX_PREFIX = 'sandbox_';
 
   /**
