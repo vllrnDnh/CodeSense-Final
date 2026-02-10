@@ -2,15 +2,15 @@
   "name": "codesense-backend",
   "version": "1.0.0",
   "description": "Intelligent C++ Static Analysis Engine for Novice Programmers",
-  "main": "dist src/server.js",
+  "main": "dist/backend/src/server.js", 
   "scripts": {
     "clean": "rimraf dist",
     "build:parser": "peggy --format commonjs -o src/analysis/parser.js grammar/cpp.pegjs",
     "build:ts": "tsc -p .",
-    "copy:parser": "if not exist dist\\analysis mkdir dist\\analysis && copy src\\analysis\\parser.js dist\\analysis\\parser.js",
+    "copy:parser": "mkdir -p dist/backend/src/analysis && cp src/analysis/parser.js dist/backend/src/analysis/parser.js",
     "build": "npm run clean && npm run build:parser && npm run build:ts && npm run copy:parser",
     "dev": "ts-node src/server.ts",
-    "start": "node dist src/server.js"
+    "start": "node dist/backend/src/server.js"
   },
   "keywords": [
     "cpp",
