@@ -9,7 +9,7 @@
 // ============================================================================
 
 export type ASTNode =
-  | ProgramNode | FunctionDeclNode | VariableDeclNode | ParameterNode
+  | ProgramNode | FunctionDeclNode | VariableDeclNode | ParameterNode | FunctionPrototypeNode
   | IntegerNode | FloatNode | CharNode | StringNode | IdentifierNode 
   | BinaryOpNode | WhileLoopNode | DoWhileLoopNode | ForLoopNode 
   | IfStatementNode | SwitchStatementNode | ReturnStatementNode | AssignmentNode
@@ -19,6 +19,15 @@ export type ASTNode =
   // NEW: Advanced Features
   | PreprocessorNode | CastExpressionNode | SizeofExpressionNode 
   | ConditionalExpressionNode | LambdaExpressionNode;
+
+
+export interface FunctionPrototypeNode extends BaseNode {
+  type: 'FunctionPrototype';
+  returnType: string;
+  name: string;
+  params: ParameterNode[];
+  // Note: No body here, just like the C++ syntax
+}
 
 export interface BaseNode {
   type: string;
@@ -346,6 +355,7 @@ export interface SymbolInfo {
   line: number;
   scope: string;
   initialized: boolean;
+  isDefined?: boolean;
   dimensions?: number[];
 }
 

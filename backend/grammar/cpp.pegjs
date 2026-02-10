@@ -107,13 +107,14 @@ Namespace
 // ============================================================================
 
 Function
-  = returnType:Type __ name:Identifier _ "(" _ params:ParameterList? _ ")" _ "{" _ body:Statement* _ "}" _ {
+  = returnType:Type __ name:Identifier _ "(" _ params:ParameterList? _ ")" _ 
+    body:("{" _ Statement* _ "}" / ";") _ { 
       return {
-        type: 'FunctionDecl',
+        type: body === ";" ? 'FunctionPrototype' : 'FunctionDecl',
         returnType,
         name,
         params: params || [],
-        body,
+        body: body === ";" ? null : body[2], 
         ...loc()
       };
     }
@@ -138,13 +139,25 @@ ParameterList
       return [first, ...rest.map(r => r[3])];
     }
 
+// MODIFIED: Support both named and unnamed parameters
 Parameter
   = type:Type __ name:Identifier _ init:("=" _ Expression)? {
+      // Named parameter (required in definitions, optional in prototypes)
       return { 
         type: 'Parameter', 
         varType: type, 
         name, 
         defaultValue: init ? init[2] : null,
+        ...loc() 
+      };
+    }
+  / type:Type {
+      // Unnamed parameter (allowed in prototypes: int func(int, int);)
+      return { 
+        type: 'Parameter', 
+        varType: type, 
+        name: null,  // Unnamed parameter
+        defaultValue: null,
         ...loc() 
       };
     }

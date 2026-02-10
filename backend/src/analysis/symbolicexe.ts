@@ -85,7 +85,7 @@ export class SymbolicExecutor {
   /**
    * Visitor dispatcher synchronized with PEG.js types
    */
-  private visit(node: ASTNode | null | string): SymbolicValue {
+  private visit(node: ASTNode | null | string | undefined): SymbolicValue{
     if (!node) return { type: 'unknown' };
     
     if (typeof node === 'string') {

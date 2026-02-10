@@ -1,7 +1,15 @@
 /**
- * Type Checker (Semantic Analysis)
+ * Advanced Type Checker (Semantic Analysis)
  * Validates type compatibility and semantic correctness of C++ code.
  * This is Phase 2 (Logic & Meaning) - Step 1 of the analysis pipeline.
+ * 
+ * Features:
+ * - Comprehensive type checking for 30+ node types
+ * - Dead code analysis and usage tracking
+ * - Redundant assignment detection
+ * - Scope shadowing warnings
+ * - Strict return statement enforcement
+ * - Advanced type compatibility (pointers, conversions, promotions)
  */
 
 import {
@@ -13,6 +21,7 @@ import {
   VariableDeclNode,
   AssignmentNode,
   FunctionDeclNode,
+  FunctionPrototypeNode,
   WhileLoopNode,
   IfStatementNode,
   ReturnStatementNode,
@@ -36,6 +45,9 @@ import {
 } from '../types';
 
 export class TypeChecker {
+  // ============================================================================
+  // State Management
+  // ============================================================================
   private symbolTable: SymbolTable = {};
   private errors: AnalysisError[] = [];
   private currentScope: string = 'global';
@@ -43,16 +55,25 @@ export class TypeChecker {
   private currentFunction: { name: string, returnType: string } | null = null;
   private functionHasReturn: boolean = false;
   
+  // Optimization & Dead Code Analysis
+  private usageTracker: Map<string, number> = new Map();
+  private dirtyAssignment: Map<string, { line: number, overwritten: boolean }> = new Map();
+  
   /**
    * Main entry point for type checking
    */
   check(ast: ASTNode): { symbolTable: SymbolTable; errors: AnalysisError[] } {
     this.symbolTable = {};
     this.errors = [];
+    this.usageTracker.clear();
+    this.dirtyAssignment.clear();
     this.currentScope = 'global';
     this.scopeStack = ['global'];
+    this.currentFunction = null;
+    this.functionHasReturn = false;
     
     this.visit(ast);
+    this.performDeadCodeAnalysis();
     
     return {
       symbolTable: this.symbolTable,
@@ -63,7 +84,7 @@ export class TypeChecker {
   /**
    * Visitor pattern dispatcher
    */
-  private visit(node: ASTNode | null | string): string | null {
+  private visit(node: ASTNode | null | string | undefined): string | null {
     if (!node) return null;
     
     if (typeof node === 'string') {
@@ -106,14 +127,68 @@ export class TypeChecker {
     const exprNode = node as ExpressionStatementNode;
     return this.visit(exprNode.expression);
   }
+
+  // ============================================================================
+  // Function Declarations & Prototypes
+  // ============================================================================
   
   /**
-   * Visit Function Declaration
+   * Visit Function Prototype (forward declaration)
+   */
+  private visitFunctionPrototype(node: ASTNode): string | null {
+    const protoNode = node as FunctionPrototypeNode;
+    
+    // Register prototype as a special symbol (not fully defined)
+    this.addSymbol(
+      protoNode.name,
+      protoNode.returnType,
+      protoNode.line || 0,
+      true, // Prototypes are "initialized" (declared)
+      undefined,
+      false // isDefined = false (only declared, not defined)
+    );
+    
+    return protoNode.returnType;
+  }
+  
+  /**
+   * Visit Function Declaration (full definition)
    */
   private visitFunctionDecl(node: ASTNode): string | null {
     const funcNode = node as FunctionDeclNode;
     
-    // 1. Set context for return statement validation
+    // 1. Register or update function symbol
+    const existingSymbol = this.symbolTable[`${this.currentScope}::${funcNode.name}`];
+    
+    if (existingSymbol) {
+      // Check if already defined (not just prototyped)
+      if (existingSymbol.isDefined) {
+        this.addError(node, `Function '${funcNode.name}' already defined`, 'error');
+        return funcNode.returnType;
+      }
+      // Prototype exists, check compatibility
+      if (existingSymbol.type !== funcNode.returnType) {
+        this.addError(
+          node,
+          `Function definition '${funcNode.name}' return type '${funcNode.returnType}' does not match prototype '${existingSymbol.type}'`,
+          'error'
+        );
+      }
+      // Upgrade prototype to definition
+      existingSymbol.isDefined = true;
+    } else {
+      // New function definition
+      this.addSymbol(
+        funcNode.name,
+        funcNode.returnType,
+        funcNode.line || 0,
+        true,
+        undefined,
+        true // isDefined = true (full definition)
+      );
+    }
+    
+    // 2. Set context for return statement validation
     this.currentFunction = { 
         name: funcNode.name, 
         returnType: funcNode.returnType 
@@ -122,20 +197,33 @@ export class TypeChecker {
     
     this.enterScope(funcNode.name);
     
-    // 2. Register Parameters in the new scope
-    funcNode.params.forEach((param: ParameterNode) => {
-        this.addSymbol(
-            param.name, 
-            param.varType, 
-            param.line || 0, 
-            true // Parameters are considered initialized by the caller
+    // 3. Register Parameters in the new scope
+    // 3. Register Parameters in the new scope
+funcNode.params.forEach((param: ParameterNode) => {
+    // Validate that function definitions have named parameters
+    if (!param.name) {
+        this.addError(
+            node,
+            `Function definition '${funcNode.name}' cannot have unnamed parameters. Only prototypes allow unnamed parameters.`,
+            'error'
         );
-    });
+        return; // Skip this parameter
+    }
     
-    // 3. Visit the body to analyze local variables and logic
+    this.addSymbol(
+        param.name, 
+        param.varType, 
+        param.line || 0, 
+        true,
+        undefined,
+        true
+    );
+});
+    
+    // 4. Visit the body to analyze local variables and logic
     funcNode.body.forEach((stmt: ASTNode) => this.visit(stmt));
     
-    // 4. STRICT ENFORCEMENT: Check for return statement violations
+    // 5. STRICT ENFORCEMENT: Check for return statement violations
     if (funcNode.name === 'main') {
         // Enforce int return type for main
         if (funcNode.returnType !== 'int') {
@@ -159,7 +247,11 @@ export class TypeChecker {
     this.functionHasReturn = false;
     
     return funcNode.returnType;
-}
+  }
+  
+  // ============================================================================
+  // Variable Declarations
+  // ============================================================================
   
   /**
    * Visit Variable Declaration
@@ -182,14 +274,24 @@ export class TypeChecker {
         });
     }
 
-    this.addSymbol(varNode.name, varNode.varType, varNode.line || 0, initialized, dimensions);
+    this.addSymbol(
+      varNode.name, 
+      varNode.varType, 
+      varNode.line || 0, 
+      initialized, 
+      dimensions,
+      true
+    );
 
-    if (varNode.value) {
+    // Track initialization as a write
+    if (initialized) {
+      this.markWrite(varNode.name, varNode.line || 0);
       const valueType = this.visit(varNode.value);
-      if (valueType && !dimensions && !this.isTypeCompatible(varNode.varType, valueType)) {
+      if (valueType && !dimensions && !this.isTypeCompatible(varNode.varType, valueType, varNode.value)) {
         this.addError(node, `Type mismatch: cannot assign ${valueType} to ${varNode.varType}`);
       }
     }
+    
     return varNode.varType;
   }
   
@@ -204,6 +306,9 @@ export class TypeChecker {
       this.addError(node, `Undeclared array '${arrayNode.name}'`);
       return null;
     }
+
+    // Mark array as read (accessing elements)
+    this.markRead(arrayNode.name);
 
     arrayNode.indices.forEach((indexNode: ASTNode) => {
       const indexType = this.visit(indexNode);
@@ -236,8 +341,8 @@ export class TypeChecker {
   private visitWhileLoop(node: ASTNode): string | null {
     const whileNode = node as WhileLoopNode;
     const condType = this.visit(whileNode.condition);
-    if (condType && condType !== 'bool') {
-      this.addError(whileNode.condition, `While condition must be boolean, got ${condType}`);
+    if (condType && !this.isContextuallyConvertibleToBool(condType)) {
+      this.addError(whileNode.condition, `While condition must be boolean or convertible, got ${condType}`);
     }
     
     this.enterScope('while');
@@ -254,15 +359,14 @@ export class TypeChecker {
     this.exitScope();
 
     const condType = this.visit(doWhileNode.condition);
-    if (condType && condType !== 'bool') {
-      this.addError(doWhileNode.condition, `Do-while condition must be boolean, got ${condType}`);
+    if (condType && !this.isContextuallyConvertibleToBool(condType)) {
+      this.addError(doWhileNode.condition, `Do-while condition must be boolean or convertible, got ${condType}`);
     }
     return null;
   }
 
   /**
    * Visit For Loop
-   * FIX: Added missing visitor
    */
   private visitForLoop(node: ASTNode): string | null {
     const forNode = node as ForLoopNode;
@@ -277,8 +381,8 @@ export class TypeChecker {
     // Visit condition (e.g., i < 10)
     if (forNode.condition) {
       const condType = this.visit(forNode.condition);
-      if (condType && condType !== 'bool') {
-        this.addError(forNode.condition, `For loop condition must be boolean, got ${condType}`);
+      if (condType && !this.isContextuallyConvertibleToBool(condType)) {
+        this.addError(forNode.condition, `For loop condition must be boolean or convertible, got ${condType}`);
       }
     }
 
@@ -296,7 +400,6 @@ export class TypeChecker {
 
   /**
    * Visit Switch Statement
-   * FIX: Added missing visitor
    */
   private visitSwitchStatement(node: ASTNode): string | null {
     const switchNode = node as SwitchStatementNode;
@@ -320,7 +423,6 @@ export class TypeChecker {
 
   /**
    * Visit Case Node (case or default in switch)
-   * FIX: Added missing visitor
    */
   private visitCase(node: ASTNode): string | null {
     const caseNode = node as unknown as CaseNode;
@@ -338,13 +440,35 @@ export class TypeChecker {
 
   /**
    * Visit Default Case
-   * FIX: Added missing visitor
    */
   private visitDefaultCase(node: ASTNode): string | null {
     return this.visitCase(node);
   }
 
- /**
+  /**
+   * Visit If Statement with contextual boolean conversion
+   */
+  private visitIfStatement(node: ASTNode): string | null {
+    const ifNode = node as IfStatementNode;
+    const condType = this.visit(ifNode.condition);
+
+    if (condType && !this.isContextuallyConvertibleToBool(condType)) {
+      this.addError(ifNode.condition, `Condition must be boolean or convertible, got ${condType}`);
+    }
+
+    this.enterScope('if');
+    ifNode.thenBranch.forEach((stmt: ASTNode) => this.visit(stmt));
+    this.exitScope();
+    
+    if (ifNode.elseBranch) {
+      this.enterScope('else');
+      ifNode.elseBranch.forEach((stmt: ASTNode) => this.visit(stmt));
+      this.exitScope();
+    }
+    return null;
+  }
+
+  /**
    * Visit Loop Control (break/continue)
    */
   private visitLoopControl(node: ASTNode): string | null {
@@ -357,7 +481,6 @@ export class TypeChecker {
 
   /**
    * Visit Global Access (::variable)
-   * FIX: Added missing visitor
    */
   private visitGlobalAccess(node: ASTNode): string | null {
     const globalNode = node as GlobalAccessNode;
@@ -373,6 +496,9 @@ export class TypeChecker {
       this.addError(node, `Global variable '${globalNode.name}' used before initialization`, 'warning');
     }
 
+    // Track global access as a read
+    this.markRead(globalNode.name);
+
     return symbol.type;
   }
 
@@ -381,19 +507,26 @@ export class TypeChecker {
   // ============================================================================
 
   /**
-   * Visit Function Call
-   * FIX: Added missing visitor
+   * Visit Function Call with usage tracking
    */
   private visitFunctionCall(node: ASTNode): string | null {
     const callNode = node as FunctionCallNode;
+
+    // Track function usage
+    this.markRead(callNode.name);
 
     // Visit all arguments to check their types
     if (callNode.arguments) {
       callNode.arguments.forEach((arg: ASTNode) => this.visit(arg));
     }
 
-    // We return 'unknown' since we don't have function signature tracking yet
-    // In a full implementation, we'd look up the function and check parameter types
+    // Look up function symbol to get return type
+    const symbol = this.lookupSymbol(callNode.name);
+    if (symbol) {
+      return symbol.type; // Return the function's return type
+    }
+
+    // If function not found, return 'unknown'
     return 'unknown';
   }
 
@@ -403,7 +536,6 @@ export class TypeChecker {
 
   /**
    * Visit Unary Operations (++, --, &, *, etc.)
-   * FIX: Added missing visitors for all unary types
    */
   private visitPreIncrement(node: ASTNode): string | null {
     return this.visitUnaryOp(node);
@@ -430,7 +562,7 @@ export class TypeChecker {
   }
 
   /**
-   * Unified unary operator handler
+   * Unified unary operator handler with usage tracking
    */
   private visitUnaryOp(node: ASTNode): string | null {
     const unaryNode = node as UnaryOpNode;
@@ -450,11 +582,17 @@ export class TypeChecker {
       return null;
     }
 
-    // For increment/decrement, check that it's numeric
+    // Track usage: increment/decrement is both read and write
     if (node.type.includes('Increment') || node.type.includes('Decrement')) {
+      this.markRead(varName); // Read the current value
+      this.markWrite(varName, (node as any).line || 0); // Write new value
+      
       if (!this.isNumericType(symbol.type)) {
         this.addError(node, `Cannot apply ${node.type} to non-numeric type ${symbol.type}`);
       }
+    } else {
+      // Address-of and dereference are reads
+      this.markRead(varName);
     }
 
     return symbol.type;
@@ -466,15 +604,14 @@ export class TypeChecker {
 
   /**
    * Visit Conditional Expression (ternary operator: a ? b : c)
-   * FIX: Added missing visitor
    */
   private visitConditionalExpression(node: ASTNode): string | null {
     const ternaryNode = node as ConditionalExpressionNode;
 
     // Check condition is boolean
     const condType = this.visit(ternaryNode.condition);
-    if (condType && condType !== 'bool') {
-      this.addError(ternaryNode.condition, `Ternary condition must be boolean, got ${condType}`);
+    if (condType && !this.isContextuallyConvertibleToBool(condType)) {
+      this.addError(ternaryNode.condition, `Ternary condition must be boolean or convertible, got ${condType}`);
     }
 
     // Check both branches
@@ -498,7 +635,6 @@ export class TypeChecker {
 
   /**
    * Visit Cast Expression
-   * FIX: Added missing visitor
    */
   private visitCastExpression(node: ASTNode): string | null {
     const castNode = node as CastExpressionNode;
@@ -512,7 +648,6 @@ export class TypeChecker {
 
   /**
    * Visit Sizeof Expression
-   * FIX: Added missing visitor
    */
   private visitSizeofExpression(node: ASTNode): string | null {
     const sizeofNode = node as SizeofExpressionNode;
@@ -526,7 +661,6 @@ export class TypeChecker {
 
   /**
    * Visit Lambda Expression
-   * FIX: Added missing visitor
    */
   private visitLambdaExpression(node: ASTNode): string | null {
     const lambdaNode = node as LambdaExpressionNode;
@@ -546,6 +680,9 @@ export class TypeChecker {
   // Expressions & Literals
   // ============================================================================
 
+  /**
+   * Visit Assignment with redundant assignment detection
+   */
   private visitAssignment(node: ASTNode): string | null {
     const assignNode = node as AssignmentNode;
     let targetType: string | null = null;
@@ -559,10 +696,16 @@ export class TypeChecker {
             this.addError(node, `Undeclared variable '${targetName}'`);
             return null;
         }
-        // Check initialization logic
-        if (assignNode.operator !== '=' && !symbol.initialized) {
-            this.addError(node, `Variable '${targetName}' used (via ${assignNode.operator}) before initialization`, 'warning');
+        
+        // Track usage: compound operators (+=, -=, etc.) read then write
+        if (assignNode.operator !== '=') {
+            this.markRead(targetName); // Read current value
+            if (!symbol.initialized) {
+                this.addError(node, `Variable '${targetName}' used (via ${assignNode.operator}) before initialization`, 'warning');
+            }
         }
+        
+        // Mark symbol as initialized
         symbol.initialized = true;
         targetType = symbol.type;
     } 
@@ -570,13 +713,22 @@ export class TypeChecker {
     else {
         // Visit the target (ArrayAccess) to validate indices and get the underlying type
         targetType = this.visit(assignNode.target);
+        // Extract name for array access tracking
+        if ((assignNode.target as any).name) {
+          targetName = (assignNode.target as any).name;
+        }
     }
 
     // Process RHS (Value)
     const valueType = this.visit(assignNode.value);
     
+    // Track the write after evaluating the RHS
+    if (targetName) {
+      this.markWrite(targetName, (assignNode as any).line || 0);
+    }
+    
     // Compatibility Check
-    if (targetType && valueType && !this.isTypeCompatible(targetType, valueType)) {
+    if (targetType && valueType && !this.isTypeCompatible(targetType, valueType, assignNode.value)) {
       this.addError(
         node,
         `Type mismatch: cannot assign ${valueType} to ${targetType}`
@@ -607,14 +759,17 @@ export class TypeChecker {
     }
     
     if (['&&', '||'].includes(binOp.operator)) {
-      if (leftType !== 'bool' || rightType !== 'bool') {
-        this.addError(node, `Logical operator '${binOp.operator}' requires boolean operands`);
+      if (!this.isContextuallyConvertibleToBool(leftType) || !this.isContextuallyConvertibleToBool(rightType)) {
+        this.addError(node, `Logical operator '${binOp.operator}' requires boolean or convertible operands`);
       }
       return 'bool';
     }
     return null;
   }
   
+  /**
+   * Visit Identifier with usage tracking
+   */
   private visitIdentifier(node: ASTNode): string | null {
     const name = (node as any).name;
 
@@ -631,72 +786,34 @@ export class TypeChecker {
     if (!symbol.initialized) {
       this.addError(node, `Variable '${name}' used before initialization`, 'warning');
     }
+    
+    // Track usage (read)
+    this.markRead(name);
+    
     return symbol.type;
   }
 
+  /**
+   * Visit Return Statement with strict enforcement
+   */
   private visitReturnStatement(node: ASTNode): string | null {
-  const retNode = node as ReturnStatementNode;
-  const actualType = retNode.value ? this.visit(retNode.value) : 'void';
+    const retNode = node as ReturnStatementNode;
+    const actualType = retNode.value ? this.visit(retNode.value) : 'void';
 
-  this.functionHasReturn = true;
+    this.functionHasReturn = true;
 
-  if (this.currentFunction) {
-    const expectedType = this.currentFunction.returnType;
-    if (actualType && !this.isTypeCompatible(expectedType, actualType)) {
-      this.addError(
-        node,
-        `Mismatched return type: function expects ${expectedType} but got ${actualType}`,
-        'error' 
-      );
+    if (this.currentFunction) {
+      const expectedType = this.currentFunction.returnType;
+      if (actualType && !this.isTypeCompatible(expectedType, actualType)) {
+        this.addError(
+          node,
+          `Mismatched return type: function expects ${expectedType} but got ${actualType}`,
+          'error' 
+        );
+      }
     }
+    return actualType;
   }
-  return actualType;
-}
-
-  private visitIfStatement(node: ASTNode): string | null {
-  const ifNode = node as IfStatementNode;
-  const condType = this.visit(ifNode.condition);
-
-  if (condType && !this.isContextuallyConvertibleToBool(condType)) {
-    this.addError(ifNode.condition, `Condition must be boolean or convertible, got ${condType}`);
-  }
-
-  ifNode.thenBranch.forEach((stmt: ASTNode) => this.visit(stmt));
-  if (ifNode.elseBranch) {
-    ifNode.elseBranch.forEach((stmt: ASTNode) => this.visit(stmt));
-  }
-  return null;
-}
-
-private isContextuallyConvertibleToBool(type: string): boolean {
-  // Core types allowed via standard boolean conversion
-  if (['bool', 'int', 'char', 'long', 'short', 'float', 'double'].includes(type)) {
-    return true;
-  }
-
-  // Pointers (including nullptr_t if you model it)
-  if (type.endsWith('*') || type === 'nullptr_t') {
-    return true;
-  }
-
-  // Unscoped enum (if you model enum as e.g. "enum:Color" or just "int" underlying)
-  if (type.startsWith('enum:')) {
-    return true;
-  }
-
-  // User-defined types with explicit operator bool()
-  // For a real checker you'd look up the type definition and check for
-  // explicit operator bool() const
-  // For now, you can either:
-  //   a) reject all unknown types (strict but simple)
-  //   b) allow anything not explicitly forbidden (closer to real C++)
-  // Most teaching/minimal checkers start strict:
-
-  return false;  // reject classes/structs/unions without conversion function
-
-  // If you want to be more permissive (closer to real C++):
-  // return !['void', 'string', 'array<int,5> /*etc*/'].includes(type);
-}
 
   // Literals - synchronized with PEG.js node names
   private visitInteger(node: any): string { return 'int'; }
@@ -715,10 +832,13 @@ private isContextuallyConvertibleToBool(type: string): boolean {
   // Stream I/O Wrappers
   // ============================================================================
 
+  /**
+   * Visit Cin Statement with chained input support
+   */
   private visitCinStatement(node: ASTNode): string | null {
       const cinNode = node as any;
       
-      // NEW: Handle chained cin (cin >> x >> y >> arr[i])
+      // Handle chained cin (cin >> x >> y >> arr[i])
       if (cinNode.targets && Array.isArray(cinNode.targets)) {
           cinNode.targets.forEach((target: string | ASTNode) => {
               if (typeof target === 'string') {
@@ -726,6 +846,7 @@ private isContextuallyConvertibleToBool(type: string): boolean {
                   const symbol = this.lookupSymbol(target);
                   if (symbol) {
                       symbol.initialized = true; // Mark as initialized after input
+                      this.markWrite(target, (cinNode as any).line || 0);
                   } else {
                       this.addError(node, `Undeclared variable '${target}' in cin statement`);
                   }
@@ -735,6 +856,8 @@ private isContextuallyConvertibleToBool(type: string): boolean {
                   const symbol = this.lookupSymbol(arrayAccess.name);
                   if (!symbol) {
                       this.addError(node, `Undeclared array '${arrayAccess.name}' in cin statement`);
+                  } else {
+                      this.markWrite(arrayAccess.name, (cinNode as any).line || 0);
                   }
                   // Validate array indices
                   arrayAccess.indices?.forEach((idx: ASTNode) => {
@@ -751,16 +874,20 @@ private isContextuallyConvertibleToBool(type: string): boolean {
           const symbol = this.lookupSymbol(cinNode.target);
           if (symbol) {
               symbol.initialized = true;
+              this.markWrite(cinNode.target, (cinNode as any).line || 0);
           }
       }
       
       return null;
   }
 
+  /**
+   * Visit Cout Statement with chained output support
+   */
   private visitCoutStatement(node: ASTNode): string | null {
       const coutNode = node as any;
       
-      // NEW: Handle chained cout (cout << x << y << "text")
+      // Handle chained cout (cout << x << y << "text")
       if (coutNode.values && Array.isArray(coutNode.values)) {
           coutNode.values.forEach((expr: ASTNode) => {
               this.visit(expr); // Validate each expression in the chain
@@ -775,147 +902,12 @@ private isContextuallyConvertibleToBool(type: string): boolean {
   }
   
   // ============================================================================
-  // Helpers
-  // ============================================================================
-  
-  private enterScope(name: string): void {
-    this.scopeStack.push(name);
-    this.currentScope = this.scopeStack.join('::');
-  }
-  
-  private exitScope(): void {
-    this.scopeStack.pop();
-    this.currentScope = this.scopeStack.join('::');
-  }
-  
-  private addSymbol(
-    name: string, 
-    type: string, 
-    line: number, 
-    initialized: boolean, 
-    dimensions?: number[] 
-  ): void {
-    // Keyword protection
-    if (name === 'true' || name === 'false') {
-        this.addError(
-            { line } as any, 
-            `Cannot use reserved keyword '${name}' as an identifier`
-        );
-        return;
-    }
-
-    const scopedName = `${this.currentScope}::${name}`;
-
-    // Redeclaration check
-    if (this.symbolTable[scopedName]) {
-        this.addError(
-            { line, type: 'VariableDecl' } as any, 
-            `Variable '${name}' already declared in this scope`
-        );
-        return; 
-    }
-
-    // Scope shadowing check (parent scopes)
-    // Check if variable exists in any parent scope
-    for (let i = this.scopeStack.length - 2; i >= 0; i--) {
-      const parentScope = this.scopeStack.slice(0, i + 1).join('::');
-      const parentScopedName = `${parentScope}::${name}`;
-      if (this.symbolTable[parentScopedName]) {
-        this.addError(
-          { line, type: 'VariableDecl' } as any,
-          `Variable '${name}' shadows declaration from outer scope (line ${this.symbolTable[parentScopedName].line})`,
-          'error'
-        );
-        break; // Only report the closest shadowed variable
-      }
-    }
-
-    // Symbol registration
-    this.symbolTable[scopedName] = { 
-        name, 
-        type, 
-        line, 
-        scope: this.currentScope, 
-        initialized,
-        dimensions 
-    };
-  }
-
-  private lookupSymbol(name: string): SymbolInfo | null {
-    for (let i = this.scopeStack.length - 1; i >= 0; i--) {
-      const scope = this.scopeStack.slice(0, i + 1).join('::');
-      const scopedName = `${scope}::${name}`;
-      if (this.symbolTable[scopedName]) {
-        return this.symbolTable[scopedName];
-      }
-    }
-    return null;
-  }
-  
-  private isTypeCompatible(target: string, source: string, sourceNode?: any): boolean {
-  if (target === source) return true;
-  if (target === 'unknown' || source === 'unknown') return true;
-
-  // 1. Pointer Logic
-  if (target.endsWith('*')) {
-    if (source === 'nullptr_t') return true;
-    // Check for literal 0 constant
-    if (source === 'int' && sourceNode?.type === 'Integer' && sourceNode.value === 0) return true;
-    // Pointer to void* is generally allowed in many contexts, but void* to T* is not
-    if (target === 'void*' && source.endsWith('*')) return true;
-  }
-
-  // 2. Boolean Truthiness (Contextual conversion to bool)
-  if (target === 'bool') {
-    return this.isNumericType(source) || source.endsWith('*');
-  }
-
-  // 3. Widening Conversions (Safe)
-  const numericWeight: Record<string, number> = { 'char': 1, 'int': 2, 'float': 3, 'double': 4 };
-  if (numericWeight[target] && numericWeight[source]) {
-    // Only return true if target is "wider" than or equal to source
-    return numericWeight[target] >= numericWeight[source];
-  }
-
-  // 4. Narrowing (Unsafe) - explicitly caught by the weight check above,
-  // but keeping your explicit catch for clarity in logs:
-  if (target === 'int' && (source === 'float' || source === 'double')) {
-    return false; 
-  }
-
-  return false;
-}
-  private isNumericType(type: string): boolean {
-    return ['int', 'float', 'double'].includes(type);
-  }
-  
-  private isComparable(left: string, right: string): boolean {
-    return this.isNumericType(left) && this.isNumericType(right);
-  }
-  
-  private promoteType(left: string, right: string): string {
-    if (left === 'double' || right === 'double') return 'double';
-    if (left === 'float' || right === 'float') return 'float';
-    return 'int';
-  }
-  
-  private addError(node: any, message: string, severity: 'error' | 'warning' = 'error'): void {
-    this.errors.push({
-      type: 'semantic',
-      message: message,
-      line: node?.line || node?.location?.start?.line || 0,
-      column: node?.column || node?.location?.start?.column || 0,
-      severity: severity,
-    });
-  }
-
-  // ============================================================================
-  // Preprocessor Directive Handlers (ADDED: Full support)
+  // Preprocessor Directive Handlers
   // ============================================================================
 
   private visitInclude(node: any): string | null {
       // Validation: Check if included file exists (warning only, not error)
-      if (node.name && !node.name.match(/^(iostream|string|vector|cmath|algorithm|iomanip)$/)) {
+      if (node.name && !node.name.match(/^(iostream|string|vector|cmath|algorithm|iomanip|cstdio|cstdlib|cstring|fstream)$/)) {
           this.addError(node, `Include file '${node.name}' may not exist`, 'warning');
       }
       return null;
@@ -923,7 +915,6 @@ private isContextuallyConvertibleToBool(type: string): boolean {
 
   private visitDefine(node: any): string | null {
       // Track macro definitions (could be used for constant folding later)
-      // For now, just validate the value if present
       if (node.value) {
           this.visit(node.value);
       }
@@ -1009,5 +1000,299 @@ private isContextuallyConvertibleToBool(type: string): boolean {
   private visitNamespace(node: any): string | null {
       // using namespace directive (no-op for basic analysis)
       return null;
+  }
+
+  // ============================================================================
+  // Optimization & Dead Code Analysis
+  // ============================================================================
+
+  /**
+   * Mark a variable as written to (detects redundant assignments)
+   */
+  private markWrite(name: string, line: number): void {
+    const fullName = this.getFullyScopedName(name);
+    if (!fullName) return;
+
+    // If there's already a 'dirty' write that hasn't been read...
+    if (this.dirtyAssignment.has(fullName)) {
+        const prevAssignment = this.dirtyAssignment.get(fullName);
+        this.addError(
+            { line } as any, 
+            `Redundant Assignment: The previous value assigned to '${name}' on line ${prevAssignment?.line} was never used and has been overwritten.`, 
+            'warning'
+        );
+    }
+    
+    this.dirtyAssignment.set(fullName, { line, overwritten: true });
+  }
+
+  /**
+   * Mark a variable as read (clears redundant assignment flag)
+   */
+  private markRead(name: string): void {
+    const fullName = this.getFullyScopedName(name);
+    if (!fullName) return;
+    
+    // Value was used - clear dirty flag
+    this.dirtyAssignment.delete(fullName);
+    
+    // Track usage count
+    const count = this.usageTracker.get(fullName) || 0;
+    this.usageTracker.set(fullName, count + 1);
+  }
+
+  /**
+   * Perform dead code analysis after visiting entire AST
+   */
+  private performDeadCodeAnalysis(): void {
+    Object.keys(this.symbolTable).forEach(fullName => {
+      const symbol = this.symbolTable[fullName];
+      
+      // Skip main function
+      if (symbol.name === 'main') return;
+      
+      // Check for unused variables and functions
+      const usageCount = this.usageTracker.get(fullName) || 0;
+      if (usageCount === 0) {
+        const entityType = symbol.isDefined !== undefined 
+          ? (symbol.isDefined ? 'Function' : 'Function Prototype') 
+          : 'Variable';
+        
+        this.addError(
+          { line: symbol.line } as any, 
+          `Unused ${entityType}: '${symbol.name}' is declared but never used`,
+          'warning'
+        );
+      }
+    });
+  }
+
+  /**
+   * Get fully scoped name for a variable (searches up scope chain)
+   */
+  private getFullyScopedName(name: string): string | null {
+    for (let i = this.scopeStack.length - 1; i >= 0; i--) {
+      const scope = this.scopeStack.slice(0, i + 1).join('::');
+      const scopedName = `${scope}::${name}`;
+      if (this.symbolTable[scopedName]) {
+        return scopedName;
+      }
+    }
+    return null;
+  }
+  
+  // ============================================================================
+  // Scope Management Helpers
+  // ============================================================================
+  
+  private enterScope(name: string): void {
+    this.scopeStack.push(name);
+    this.currentScope = this.scopeStack.join('::');
+  }
+  
+  private exitScope(): void {
+    this.scopeStack.pop();
+    this.currentScope = this.scopeStack.join('::');
+  }
+  
+  /**
+   * Add symbol to symbol table with comprehensive validation
+   */
+  private addSymbol(
+    name: string, 
+    type: string, 
+    line: number, 
+    initialized: boolean, 
+    dimensions?: number[],
+    isDefined: boolean = true
+  ): void {
+    // Keyword protection
+    if (name === 'true' || name === 'false') {
+        this.addError(
+            { line } as any, 
+            `Cannot use reserved keyword '${name}' as an identifier`
+        );
+        return;
+    }
+
+    const scopedName = `${this.currentScope}::${name}`;
+
+    // Redeclaration check
+    if (this.symbolTable[scopedName]) {
+        const existing = this.symbolTable[scopedName];
+        
+        // Allow prototype followed by definition
+        if (existing.isDefined === false && isDefined) {
+            // Upgrade prototype to definition
+            existing.isDefined = true;
+            return;
+        }
+        
+        // Otherwise, it's a redeclaration error
+        this.addError(
+            { line, type: 'VariableDecl' } as any, 
+            `${isDefined ? 'Redefinition' : 'Redeclaration'} of '${name}' (previously declared on line ${existing.line})`
+        );
+        return; 
+    }
+
+    // Scope shadowing check (parent scopes)
+    for (let i = this.scopeStack.length - 2; i >= 0; i--) {
+      const parentScope = this.scopeStack.slice(0, i + 1).join('::');
+      const parentScopedName = `${parentScope}::${name}`;
+      if (this.symbolTable[parentScopedName]) {
+        this.addError(
+          { line, type: 'VariableDecl' } as any,
+          `Variable '${name}' shadows declaration from outer scope (line ${this.symbolTable[parentScopedName].line})`,
+          'error'
+        );
+        break; // Only report the closest shadowed variable
+      }
+    }
+
+    // Symbol registration
+    this.symbolTable[scopedName] = { 
+        name, 
+        type, 
+        line, 
+        scope: this.currentScope, 
+        initialized,
+        dimensions,
+        isDefined
+    };
+  }
+
+  /**
+   * Look up symbol in current scope and parent scopes
+   */
+  private lookupSymbol(name: string): SymbolInfo | null {
+    for (let i = this.scopeStack.length - 1; i >= 0; i--) {
+      const scope = this.scopeStack.slice(0, i + 1).join('::');
+      const scopedName = `${scope}::${name}`;
+      if (this.symbolTable[scopedName]) {
+        return this.symbolTable[scopedName];
+      }
+    }
+    return null;
+  }
+  
+  // ============================================================================
+  // Type Compatibility & Conversion Helpers
+  // ============================================================================
+  
+  /**
+   * Check if source type can be assigned to target type
+   */
+  private isTypeCompatible(target: string, source: string, sourceNode?: any): boolean {
+    if (target === source) return true;
+    if (target === 'unknown' || source === 'unknown') return true;
+
+    // 1. Pointer Logic
+    if (target.endsWith('*')) {
+      if (source === 'nullptr_t') return true;
+      // Check for literal 0 constant
+      if (source === 'int' && sourceNode?.type === 'Integer' && sourceNode.value === 0) return true;
+      // Pointer to void* is generally allowed in many contexts, but void* to T* is not
+      if (target === 'void*' && source.endsWith('*')) return true;
+    }
+
+    // 2. Boolean Truthiness (Contextual conversion to bool)
+    if (target === 'bool') {
+      return this.isContextuallyConvertibleToBool(source);
+    }
+
+    // 3. Widening Conversions (Safe)
+    const numericWeight: Record<string, number> = { 
+      'char': 1, 
+      'int': 2, 
+      'long': 2.5,
+      'float': 3, 
+      'double': 4 
+    };
+    
+    if (numericWeight[target] && numericWeight[source]) {
+      // Only return true if target is "wider" than or equal to source
+      return numericWeight[target] >= numericWeight[source];
+    }
+
+    // 4. Narrowing (Unsafe) - explicitly disallow
+    if (target === 'int' && (source === 'float' || source === 'double')) {
+      return false; 
+    }
+
+    return false;
+  }
+
+  /**
+   * Check if a type can be contextually converted to bool (C++ standard)
+   */
+  private isContextuallyConvertibleToBool(type: string): boolean {
+    // Core types allowed via standard boolean conversion
+    if (['bool', 'int', 'char', 'long', 'short', 'float', 'double'].includes(type)) {
+      return true;
+    }
+
+    // Pointers (including nullptr_t if you model it)
+    if (type.endsWith('*') || type === 'nullptr_t') {
+      return true;
+    }
+
+    // Unscoped enum (if you model enum as e.g. "enum:Color" or just "int" underlying)
+    if (type.startsWith('enum:')) {
+      return true;
+    }
+
+    // User-defined types with explicit operator bool()
+    // For a real checker you'd look up the type definition and check for
+    // explicit operator bool() const
+    // For now, reject all unknown types (strict but simple)
+    return false;
+  }
+
+  /**
+   * Check if a type is numeric
+   */
+  private isNumericType(type: string): boolean {
+    return ['int', 'float', 'double', 'char', 'long', 'short'].includes(type);
+  }
+  
+  /**
+   * Check if two types can be compared
+   */
+  private isComparable(left: string, right: string): boolean {
+    // Numeric types can be compared
+    if (this.isNumericType(left) && this.isNumericType(right)) return true;
+    
+    // Same types can be compared (including pointers)
+    if (left === right) return true;
+    
+    // Pointers can be compared with nullptr
+    if ((left.endsWith('*') && right === 'nullptr_t') || 
+        (right.endsWith('*') && left === 'nullptr_t')) return true;
+    
+    return false;
+  }
+  
+  /**
+   * Promote types for binary operations (widening)
+   */
+  private promoteType(left: string, right: string): string {
+    if (left === 'double' || right === 'double') return 'double';
+    if (left === 'float' || right === 'float') return 'float';
+    if (left === 'long' || right === 'long') return 'long';
+    return 'int';
+  }
+  
+  /**
+   * Add error to error list
+   */
+  private addError(node: any, message: string, severity: 'error' | 'warning' = 'error'): void {
+    this.errors.push({
+      type: 'semantic',
+      message: message,
+      line: node?.line || node?.location?.start?.line || 0,
+      column: node?.column || node?.location?.start?.column || 0,
+      severity: severity,
+    });
   }
 }

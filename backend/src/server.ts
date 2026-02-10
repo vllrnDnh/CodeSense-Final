@@ -9,17 +9,27 @@ const PORT = process.env.PORT || 3000;
 
 /**
  * 1. DYNAMIC CORS CONFIGURATION
- * This prevents unauthorized domains from accessing your analysis engine.
+ * Updated to allow local development, production, and VS Code Dev Tunnels.
  */
 const allowedOrigins = [
-    'http://localhost:5173', // Local Vite development
-    'https://code-sense-final-lsif.vercel.app' // Your live frontend URL
+    'http://localhost:5173', 
+    'https://code-sense-final-lsif.vercel.app', // Production URL
+    'https://l00qvddz-5173.asse.devtunnels.ms'  // Your current Dev Tunnel
 ];
 
 app.use(cors({
     origin: (origin, callback) => {
-        // Allow requests with no origin (like Postman/curl) or from our whitelist
-        if (!origin || allowedOrigins.includes(origin) || origin.endsWith('.vercel.app')) {
+        // Allow if:
+        // - No origin (Postman/Curl)
+        // - In our allowedOrigins list
+        // - It's a Vercel preview branch (.vercel.app)
+        // - It's a VS Code Dev Tunnel (.devtunnels.ms)
+        if (
+            !origin || 
+            allowedOrigins.includes(origin) || 
+            origin.endsWith('.vercel.app') || 
+            origin.endsWith('.devtunnels.ms') // Wildcard for all dev tunnels
+        ) {
             callback(null, true);
         } else {
             console.error(`CORS Blocked: Origin ${origin} is not allowed.`);
@@ -34,7 +44,6 @@ app.use(bodyParser.json());
 
 /**
  * 2. REQUEST LOGGING
- * Useful for debugging Vercel logs to see incoming analysis payloads.
  */
 app.use((req: Request, _res: Response, next: NextFunction) => {
     if (req.path === '/api/analyze') {
@@ -57,12 +66,10 @@ app.get('/', (req, res) => {
 
 /**
  * 4. GLOBAL ERROR HANDLER
- * Catches parser crashes or logic errors and returns a clean JSON response.
  */
 app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
     console.error(`🔥 Backend Error Caught: ${err.message}`);
 
-    // Determine if the error is syntactic (likely from the parser)
     const isSyntactic = err.name === 'SyntaxError' || err.message.includes('Expected');
 
     res.status(200).json({
@@ -80,8 +87,7 @@ app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
 
 /**
  * 5. SERVER EXECUTION LOGIC
- * Vercel uses the 'export default app' to wrap your server in a serverless function.
- * We only run app.listen locally to avoid conflict in production.
+ * Only run app.listen locally to avoid conflict with Vercel's serverless wrapper.
  */
 if (process.env.NODE_ENV !== 'production') {
     app.listen(PORT, () => {

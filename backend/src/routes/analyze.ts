@@ -29,6 +29,7 @@ router.post('/analyze', (req, res) => {
                 ast: null,
                 symbolTable: {},
                 errors: lexResult.errors.map(err => ({ ...err, type: 'lexical', severity: 'error' })),
+                warnings: [],
                 cognitiveComplexity: 0,
                 safetyChecks: [],
                 cfg: { nodes: [], edges: [] },
@@ -90,15 +91,27 @@ router.post('/analyze', (req, res) => {
                 symbolicExecution: [],
                 cognitiveComplexity: 0,
                 explanations: ["❌ **Status:** Strict Dependency Check Failed."],
-                errors: strictErrors.map(err => ({ ...err, type: 'semantic' }))
+                errors: strictErrors.map(err => ({ ...err, type: 'semantic' })),
+                warnings: []
             });
         }
 
-        // PHASE 3: Semantic Analysis
+        // PHASE 3: Semantic Analysis (ENHANCED)
         console.log("--- Semantic Phase ---");
         const typeChecker = new TypeChecker();
         const typeResult = typeChecker.check(ast);
+        
+        // Separate errors and warnings for better UX
         const semanticErrors = typeResult.errors.filter(e => e.severity === 'error');
+        const semanticWarnings = typeResult.errors.filter(e => e.severity === 'warning');
+        
+        console.log("Semantic Errors:", semanticErrors.length);
+        console.log("Semantic Warnings:", semanticWarnings.length);
+        
+        // Log warning details for debugging
+        if (semanticWarnings.length > 0) {
+            console.log("⚠️ Warning Details:", semanticWarnings.map(w => w.message));
+        }
         
         if (semanticErrors.length > 0) {
             console.log("❌ Semantic Errors:", semanticErrors.length);
@@ -112,7 +125,8 @@ router.post('/analyze', (req, res) => {
                 symbolicExecution: [],
                 cognitiveComplexity: 0,
                 explanations: ["❌ **Status:** Semantic Analysis Failed"],
-                errors: typeResult.errors
+                errors: semanticErrors,
+                warnings: semanticWarnings // Include warnings even on error
             });
         }
 
@@ -144,8 +158,10 @@ router.post('/analyze', (req, res) => {
             safetyChecks: safetyChecks 
         } as any, req.body.hintsUsed || 0);
 
-        // COMPLETE RESPONSE WITH ALL FIELDS
+        // COMPLETE RESPONSE WITH ALL FIELDS (INCLUDING WARNINGS)
         console.log("✅ Analysis Complete - Success!");
+        console.log("📊 Final Stats: Errors=0, Warnings=" + semanticWarnings.length);
+        
         res.json({
             success: true,
             tokens: lexResult.tokens,
@@ -161,7 +177,8 @@ router.post('/analyze', (req, res) => {
                 qualityBonus: reward.bonus,
                 levelTitle: gameEngine.getLevelTitle(Math.floor(reward.xp / 100) + 1)
             },
-            errors: [] // No errors on success
+            errors: [], // No errors on success
+            warnings: semanticWarnings // NEW: Include warnings for code quality insights
         });
 
     } catch (e: any) {
@@ -180,6 +197,7 @@ router.post('/analyze', (req, res) => {
             ast: null,
             symbolTable: {},
             errors: [syntaxError],
+            warnings: [],
             cognitiveComplexity: 0,
             safetyChecks: [],
             cfg: { nodes: [], edges: [] },
