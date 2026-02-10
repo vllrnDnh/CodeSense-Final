@@ -30,7 +30,6 @@
 , "../frontend/src/services/firebase.ts"  ],
   "exclude": [
     "node_modules",
-    "dist",
-    "frontend"
+    "dist"
   ]
 }
