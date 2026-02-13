@@ -18,7 +18,13 @@ Program
         type: 'Program', 
         directives, 
         namespace: namespace || null, 
-        body, 
+        body: body.flatMap(item => {
+          // Flatten MultipleVariableDecl into individual VariableDecl nodes
+          if (item.type === 'MultipleVariableDecl') {
+            return item.declarations;
+          }
+          return item;
+        }), 
         ...loc() 
       };
     }
@@ -83,6 +89,7 @@ PreprocessorCondition
   / expr:LogicalOr { return expr; }
 
 // Common pragma directives
+
 PragmaDirective
   = "once" { return { type: 'PragmaOnce' }; }
   / "pack" _ "(" _ value:Integer _ ")" { 
@@ -139,27 +146,42 @@ ParameterList
       return [first, ...rest.map(r => r[3])];
     }
 
-// MODIFIED: Support both named and unnamed parameters
 Parameter
-  = type:Type __ name:Identifier _ init:("=" _ Expression)? {
-      // Named parameter (required in definitions, optional in prototypes)
+  = type:Type __ name:Identifier dims:ArrayDimension* _ init:("=" _ Expression)? {
       return { 
         type: 'Parameter', 
         varType: type, 
         name, 
+        dimensions: dims,
         defaultValue: init ? init[2] : null,
-        ...loc() 
+        ...loc()
+      };
+    }
+  / type:Type dims:ArrayDimension+ {
+      // Unnamed array parameter: int[]
+      return {
+        type: 'Parameter',
+        varType: type,
+        name: null,
+        dimensions: dims,
+        defaultValue: null,
+        ...loc()
       };
     }
   / type:Type {
-      // Unnamed parameter (allowed in prototypes: int func(int, int);)
-      return { 
-        type: 'Parameter', 
-        varType: type, 
-        name: null,  // Unnamed parameter
+      return {
+        type: 'Parameter',
+        varType: type,
+        name: null,
+        dimensions: [],
         defaultValue: null,
-        ...loc() 
+        ...loc()
       };
+    }
+
+ArrayDimension
+  = _ "[" _ size:Expression? _ "]" {
+      return size || null;
     }
 
 // ============================================================================
@@ -185,9 +207,29 @@ Block
     }
 
 SwitchStatement
-  = "switch" _ "(" _ cond:Expression _ ")" _ "{" _ cases:CaseBlock* _ "}" {
+  = "switch" _ "(" _ cond:Expression _ ")" _ "{" _ cases:CaseBlock* _ "}" _ {
       return { type: 'SwitchStatement', condition: cond, cases, ...loc() };
     }
+
+CaseBlock
+  = "case" __ val:Expression _ ":" _ statements:CaseStatement* {
+      return { type: 'Case', value: val, statements, ...loc() };
+    }
+  / "default" _ ":" _ statements:CaseStatement* {
+      return { type: 'DefaultCase', statements, ...loc() };
+    }
+
+CaseStatement
+  = VariableDeclaration
+  / StreamStatement
+  / LoopControlStatement
+  / IfStatement
+  / WhileLoop
+  / ForLoop
+  / DoWhileLoop
+  / ReturnStatement
+  / ExpressionStatement
+  / Block
 
 DoWhileLoop
   = "do" _ body:Statement _ "while" _ "(" _ condition:Expression _ ")" _ ";" _ {
@@ -199,29 +241,53 @@ DoWhileLoop
       };
     }
 
-CaseBlock
-  = "case" __ val:Expression _ ":" _ statements:Statement* {
-      return { type: 'Case', value: val, statements, ...loc() };
-    }
-  / "default" _ ":" _ statements:Statement* {
-      return { type: 'DefaultCase', statements, ...loc() };
-    }
-
 LoopControlStatement
   = type:("break" / "continue") _ ";" _ {
       return { type: 'LoopControl', value: type, ...loc() };
     }
 
 VariableDeclaration
-  = mods:TypeModifier* _ type:Type __ name:Identifier dims:(_ "[" _ Expression _ "]")* value:(_ "=" _ Expression)? _ ";" _ {
+  = mods:TypeModifier* _ type:Type __ first:VariableDeclarator rest:(_ "," _ VariableDeclarator)* _ ";" _ {
+      // Handle multiple declarations: int x, y, z;
+      const declarations = [first, ...rest.map(r => r[3])];
+      
+      // If only one declaration, return it directly
+      if (declarations.length === 1) {
+        return {
+          type: 'VariableDecl',
+          modifiers: mods,
+          varType: type,
+          name: declarations[0].name,
+          dimensions: declarations[0].dimensions,
+          value: declarations[0].value,
+          ...loc()
+        };
+      }
+      
+      // Multiple declarations: return a MultipleVariableDecl node
       return {
-        type: 'VariableDecl',
-        modifiers: mods, 
+        type: 'MultipleVariableDecl',
+        modifiers: mods,
         varType: type,
+        declarations: declarations.map(d => ({
+          type: 'VariableDecl',
+          modifiers: mods,
+          varType: type,
+          name: d.name,
+          dimensions: d.dimensions,
+          value: d.value,
+          ...loc()
+        })),
+        ...loc()
+      };
+    }
+
+VariableDeclarator
+  = name:Identifier dims:(_ "[" _ Expression _ "]")* value:(_ "=" _ Expression)? {
+      return {
         name: name,
         dimensions: dims.map(d => d[3]),
-        value: value ? value[3] : null,
-        ...loc()
+        value: value ? value[3] : null
       };
     }
 

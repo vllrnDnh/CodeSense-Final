@@ -101,14 +101,25 @@ router.post('/analyze', (req, res) => {
         const typeChecker = new TypeChecker();
         const typeResult = typeChecker.check(ast);
         
-        // Separate errors and warnings for better UX
         const semanticErrors = typeResult.errors.filter(e => e.severity === 'error');
-        const semanticWarnings = typeResult.errors.filter(e => e.severity === 'warning');
+        
+        // ====================================================================
+        // FILTER OUT STANDARD LIBRARY FALSE POSITIVES
+        // ====================================================================
+        const stdLibSymbols = ['cout', 'cin', 'endl', 'string', 'cerr', 'clog'];
+        const semanticWarnings = typeResult.errors
+            .filter(e => e.severity === 'warning')
+            .filter(w => {
+                // Filter out warnings about unused standard library symbols
+                const isStdLibWarning = stdLibSymbols.some(symbol => 
+                    w.message.includes(`'${symbol}'`) && w.message.toLowerCase().includes('unused')
+                );
+                return !isStdLibWarning;
+            });
         
         console.log("Semantic Errors:", semanticErrors.length);
-        console.log("Semantic Warnings:", semanticWarnings.length);
+        console.log("Semantic Warnings (filtered):", semanticWarnings.length);
         
-        // Log warning details for debugging
         if (semanticWarnings.length > 0) {
             console.log("⚠️ Warning Details:", semanticWarnings.map(w => w.message));
         }
@@ -124,16 +135,20 @@ router.post('/analyze', (req, res) => {
                 cfg: { nodes: [], edges: [] },
                 symbolicExecution: [],
                 cognitiveComplexity: 0,
-                explanations: ["❌ **Status:** Semantic Analysis Failed"],
+                explanations: [
+                    "❌ **Status:** Semantic Analysis Failed",
+                    ...semanticErrors.map(e => `🚨 **Error (Line ${e.line}):** ${e.message}`),
+                    ...semanticWarnings.map(w => `⚠️ **Warning (Line ${w.line}):** ${w.message}`)
+                ],
                 errors: semanticErrors,
-                warnings: semanticWarnings // Include warnings even on error
+                warnings: semanticWarnings
             });
         }
 
         // PHASE 4: Logic, Safety, and Control Flow
         console.log("--- Logic & Safety Phase ---");
         
-        // Symbolic Execution (catches division by zero, negative indices, etc.)
+        // Symbolic Execution
         const executor = new SymbolicExecutor(typeResult.symbolTable);
         const safetyChecks = executor.execute(ast);
         
@@ -145,6 +160,40 @@ router.post('/analyze', (req, res) => {
         // Generate Mentor Explanations
         const translator = new Translator();
         const mentorExplanations = translator.translate(ast);
+
+        // ====================================================================
+        // GENERATE SUMMARY ADVICE (The Solution Tip)
+        // ====================================================================
+        let summaryAdvice: string[] = [];
+        
+        if (semanticWarnings.length > 0) {
+            summaryAdvice.push("---");
+            summaryAdvice.push("💡 **Mentor's Final Advice:**");
+            
+            const hasUnused = semanticWarnings.some(w => w.message.toLowerCase().includes('unused'));
+            const hasRedundant = semanticWarnings.some(w => w.message.toLowerCase().includes('redundant'));
+
+            if (hasUnused) {
+                summaryAdvice.push("➜ I found variables that aren't being used. Removing them will make your code cleaner!");
+            }
+            if (hasRedundant) {
+                summaryAdvice.push("➜ Be careful with assignments! Some values are being overwritten before they are ever read.");
+            }
+        }
+
+        // ====================================================================
+        // MERGED SEMANTIC WARNINGS INTO LOGS
+        // ====================================================================
+        const warningExplanations = semanticWarnings.map(w => 
+            `⚠️ **WARNING (Line ${w.line}):** ${w.message}`
+        );
+
+        // Prepend warnings so they appear at the top of the Logs tab
+        const finalExplanations = [
+            ...warningExplanations, 
+            ...mentorExplanations,
+            ...summaryAdvice
+        ];
         
         // Calculate Complexity Score
         const scorer = new CognitiveComplexity();
@@ -158,7 +207,7 @@ router.post('/analyze', (req, res) => {
             safetyChecks: safetyChecks 
         } as any, req.body.hintsUsed || 0);
 
-        // COMPLETE RESPONSE WITH ALL FIELDS (INCLUDING WARNINGS)
+        // COMPLETE RESPONSE
         console.log("✅ Analysis Complete - Success!");
         console.log("📊 Final Stats: Errors=0, Warnings=" + semanticWarnings.length);
         
@@ -169,16 +218,16 @@ router.post('/analyze', (req, res) => {
             symbolTable: typeResult.symbolTable,
             safetyChecks: safetyChecks,
             cfg: cfg,
-            symbolicExecution: [], // Not implemented in SymbolicExecutor yet
+            symbolicExecution: [], 
             cognitiveComplexity: score,
-            explanations: mentorExplanations,
+            explanations: finalExplanations, // Updated to include warnings
             gamification: {
                 xpEarned: reward.xp,
                 qualityBonus: reward.bonus,
                 levelTitle: gameEngine.getLevelTitle(Math.floor(reward.xp / 100) + 1)
             },
-            errors: [], // No errors on success
-            warnings: semanticWarnings // NEW: Include warnings for code quality insights
+            errors: [], 
+            warnings: semanticWarnings 
         });
 
     } catch (e: any) {
@@ -202,7 +251,7 @@ router.post('/analyze', (req, res) => {
             safetyChecks: [],
             cfg: { nodes: [], edges: [] },
             symbolicExecution: [],
-            explanations: ["❌ **Status:** Syntax Error Detected."]
+            explanations: [`❌ **Status:** Syntax Error Detected - ${e.message}`]
         });
     }
 });

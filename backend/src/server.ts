@@ -4,6 +4,8 @@ import bodyParser from 'body-parser';
 import analyzeRoutes from './routes/analyze';
 
 const app = express();
+
+app.use(cors());
 // Vercel provides process.env.PORT; 3000 is our local fallback
 const PORT = process.env.PORT || 3000;
 

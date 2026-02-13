@@ -356,6 +356,7 @@ export interface SymbolInfo {
   scope: string;
   initialized: boolean;
   isDefined?: boolean;
+  kind: 'variable' | 'function' | 'parameter';
   dimensions?: number[];
 }
 

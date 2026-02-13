@@ -1,13 +1,8 @@
 /**
- * Symbolic Execution Engine
- * Performs bounded, path-sensitive analysis to detect:
- * - Division by zero
- * - Null pointer dereference
- * - Array out-of-bounds
- * - Use of uninitialized variables
- * - Potential infinite loops
- *
- * This is Phase 2 (Logic & Meaning) - Step 2 of the analysis pipeline.
+ * Bulletproof Symbolic Execution Engine
+ * COMPREHENSIVE ERROR HANDLING + ALL BASIC C++ CHECKS
+ * Handles: Division/modulo by zero, array bounds, uninitialized variables, infinite loops,
+ * memory leaks, use-after-free, double-free, null pointers, integer overflow, shift operations
  */
 
 import {
@@ -33,13 +28,16 @@ import {
   SizeofExpressionNode,
   LambdaExpressionNode,
   ParameterNode,
-  ForLoopNode
+  ForLoopNode,
+  FunctionCallNode
 } from '../types';
 
 type SymbolicValue =
   | { type: 'concrete'; value: number; arraySize?: number }
   | { type: 'symbolic'; name: string; constraints: Constraint[]; nullable?: boolean; arraySize?: number }
-  | { type: 'unknown'; arraySize?: number };
+  | { type: 'unknown'; arraySize?: number }
+  | { type: 'pointer'; target?: string; isNull?: boolean; isFreed?: boolean; arraySize?: number }
+  | { type: 'nullptr'; arraySize?: number }; 
 
 interface Constraint {
   variable: string;
@@ -51,6 +49,8 @@ interface SymbolicState {
   variables: Map<string, SymbolicValue>;
   pathConditions: Constraint[];
   initialized: Set<string>;
+  allocatedPointers: Map<string, { line: number; freed: boolean; size?: number }>;
+  freedPointers: Set<string>;
 }
 
 export class SymbolicExecutor {
@@ -58,6 +58,12 @@ export class SymbolicExecutor {
   private state!: SymbolicState;
   private symbolTable: SymbolTable;
   private currentScope: string = 'global';
+  private currentFunction: string | null = null;
+  
+  // Platform-specific limits
+  private readonly INT_MAX = 2147483647;
+  private readonly INT_MIN = -2147483648;
+  private readonly UINT_MAX = 4294967295;
 
   constructor(symbolTable: SymbolTable) {
     this.symbolTable = symbolTable;
@@ -69,312 +75,432 @@ export class SymbolicExecutor {
       variables: new Map(),
       pathConditions: [],
       initialized: new Set(),
+      allocatedPointers: new Map(),
+      freedPointers: new Set()
     };
   }
 
-  /**
-   * Main entry point for symbolic execution
-   */
   execute(ast: ASTNode): SafetyCheck[] {
     this.safetyChecks = [];
     this.resetState();
-    this.visit(ast);
+    
+    try {
+      // Initialize standard library symbols (iostream, etc.)
+      this.initializeStandardLibrary();
+      
+      // Initialize global variables
+      Object.entries(this.symbolTable).forEach(([scopedName, symbol]) => {
+        if (symbol.scope === 'global') {
+          if (symbol.initialized) {
+            this.state.initialized.add(symbol.name);
+          }
+          
+          if (symbol.dimensions && symbol.dimensions.length > 0) {
+            this.state.variables.set(symbol.name, {
+              type: 'concrete',
+              value: 0,
+              arraySize: symbol.dimensions[0]
+            });
+          }
+        }
+      });
+      
+      this.visit(ast);
+      
+      // Check for memory leaks at program end
+      this.checkForMemoryLeaks();
+      
+    } catch (error: any) {
+      // Graceful error handling - don't crash the analysis
+      console.error('[SymbolicExecutor] Error during execution:', error.message);
+      this.addSafetyCheck(
+        0,
+        'symbolic_execution',
+        'WARNING',
+        `Analysis error: ${error.message}`
+      );
+    }
+    
     return this.safetyChecks;
   }
 
   /**
-   * Visitor dispatcher synchronized with PEG.js types
+   * Initialize C++ standard library symbols as pre-defined and safe
    */
-  private visit(node: ASTNode | null | string | undefined): SymbolicValue{
+  private initializeStandardLibrary(): void {
+    // Mark iostream objects as initialized and safe to use
+    const stdLibSymbols = ['cout', 'cin', 'endl', 'string'];
+    
+    stdLibSymbols.forEach(symbol => {
+      this.state.initialized.add(symbol);
+      this.state.variables.set(symbol, {
+        type: 'symbolic',
+        name: symbol,
+        constraints: []
+      });
+    });
+  }
+
+  private visit(node: ASTNode | null | string | undefined): SymbolicValue {
     if (!node) return { type: 'unknown' };
     
-    if (typeof node === 'string') {
+    try {
+      if (typeof node === 'string') {
         return this.visitIdentifier({ type: 'Identifier', name: node } as any);
-    }
+      }
 
-    const methodName = `visit${node.type}` as keyof this;
-    if (typeof this[methodName] === 'function') {
-      return (this[methodName] as any).call(this, node);
-    }
-    
-    // Fallback for containers
-    if ('body' in node) {
+      const methodName = `visit${node.type}` as keyof this;
+      if (typeof this[methodName] === 'function') {
+        return (this[methodName] as any).call(this, node);
+      }
+      
+      // Default traversal for unknown node types
+      if ('body' in node && Array.isArray((node as any).body)) {
         (node as any).body.forEach((child: ASTNode) => this.visit(child));
-    } else if ('statements' in node) {
+      } else if ('statements' in node && Array.isArray((node as any).statements)) {
         (node as any).statements.forEach((child: ASTNode) => this.visit(child));
+      }
+    } catch (error: any) {
+      const nodeType = typeof node === 'string' ? 'string' : (node as any).type || 'unknown';
+     console.error(`[SymbolicExecutor] Error visiting ${nodeType}:`, error.message);
     }
 
     return { type: 'unknown' };
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
-  // Program & Functions
-  // ─────────────────────────────────────────────────────────────────────────────
-
-private visitProgram(node: any): SymbolicValue {
-    // If the program body is not iterated, main() is never analyzed!
+  private visitProgram(node: any): SymbolicValue {
     if (node.body && Array.isArray(node.body)) {
-        node.body.forEach((stmt: ASTNode) => this.visit(stmt));
+      node.body.forEach((stmt: ASTNode) => this.visit(stmt));
     }
     return { type: 'unknown' };
-}
+  }
 
- private visitFunctionDecl(node: ASTNode): SymbolicValue {
+  private visitFunctionDecl(node: ASTNode): SymbolicValue {
     const funcNode = node as FunctionDeclNode; 
     const previousScope = this.currentScope;
+    const previousFunc = this.currentFunction;
+    
     this.currentScope = funcNode.name;
+    this.currentFunction = funcNode.name;
 
-    // 1. Initialize parameters as symbolic values to handle unknown caller data
+    // Save allocated pointers before entering function
+    const allocatedBefore = new Map(this.state.allocatedPointers);
+
+    // Handle parameters
     funcNode.params.forEach((param: ParameterNode) => {
       const isPointer = param.varType.endsWith('*');
       this.state.variables.set(param.name, {
-        type: 'symbolic',
+        type: isPointer ? 'pointer' : 'symbolic',
         name: param.name,
         constraints: [],
         nullable: isPointer
-      });
+      } as any);
       this.state.initialized.add(param.name);
     });
 
-    // 2. CRITICAL: Iterate through the body to trigger safety checks
-    // The test runner will miss logic risks if this loop is skipped or fails.
+    // Visit function body
     if (funcNode.body && Array.isArray(funcNode.body)) {
-        funcNode.body.forEach((stmt: ASTNode) => this.visit(stmt));
+      funcNode.body.forEach((stmt: ASTNode) => this.visit(stmt));
     }
 
-    this.currentScope = previousScope;
-    return { type: 'unknown' };
-}
+    // Check for memory leaks in function
+    this.state.allocatedPointers.forEach((info, ptr) => {
+      if (!info.freed && !allocatedBefore.has(ptr)) {
+        this.addSafetyCheck(
+          info.line,
+          ptr,
+          'WARNING',
+          `Potential memory leak: Pointer '${ptr}' allocated but not freed before function exit`
+        );
+      }
+    });
 
-  // ─────────────────────────────────────────────────────────────────────────────
-  // Variable Declaration & Assignment
-  // ─────────────────────────────────────────────────────────────────────────────
+    this.currentScope = previousScope;
+    this.currentFunction = previousFunc;
+    return { type: 'unknown' };
+  }
 
   private visitVariableDecl(node: ASTNode): SymbolicValue {
     const varNode = node as VariableDeclNode;
     let computedSize: number | undefined = undefined;
 
-    // 1. Capture Array Size
+    // Handle array dimensions
     if (varNode.dimensions && varNode.dimensions.length > 0) {
-        const dimResult = this.visit(varNode.dimensions[0]);
-        if (dimResult.type === 'concrete') {
-            computedSize = dimResult.value;
+      const dimResult = this.visit(varNode.dimensions[0]);
+      if (dimResult.type === 'concrete') {
+        computedSize = dimResult.value;
+        
+        // Check for invalid array size
+        if (computedSize <= 0) {
+          this.addSafetyCheck(
+            node.line || 0,
+            varNode.name,
+            'UNSAFE',
+            `Invalid array size: ${computedSize} (must be positive)`
+          );
         }
+      }
     }
 
-    // 2. Evaluate Initial Value
     let value: SymbolicValue = { type: 'unknown' };
-    
-    if (varNode.value) {
-      value = this.visit(varNode.value);
+const isPointer = varNode.varType.endsWith('*');
+
+if (varNode.value) {
+  value = this.visit(varNode.value);
+  this.state.initialized.add(varNode.name);
+  
+  // Track pointer allocation from new/malloc
+  if (isPointer && varNode.value && typeof varNode.value !== 'string' && varNode.value.type === 'FunctionCall') {
+    const funcCall = varNode.value as FunctionCallNode;
+    if (['new', 'malloc', 'calloc'].includes(funcCall.name)) {
+      this.state.allocatedPointers.set(varNode.name, {
+        line: node.line || 0,
+        freed: false
+      });
+    }
+  }
+  
+  // Handle nullptr assignment
+  if (varNode.value && typeof varNode.value !== 'string' && 
+      varNode.value.type === 'Identifier' && (varNode.value as any).name === 'nullptr') {
+    value = { type: 'nullptr' };
+  }
+} else if (computedSize !== undefined) {
       this.state.initialized.add(varNode.name);
-    } else {
-        // Mark arrays as initialized
-        if (computedSize !== undefined) {
-            this.state.initialized.add(varNode.name);
-            value = { type: 'concrete', value: 0 }; 
-        }
+      value = { type: 'concrete', value: 0 };
+    } else if (isPointer) {
+      value = { type: 'pointer', isNull: true };
     }
 
-    // 3. Store the value WITH the arraySize metadata
-    if (value.type === 'concrete') {
-        value = { ...value, arraySize: computedSize };
-    } else {
-        if (computedSize !== undefined) {
-            value = { type: 'concrete', value: 0, arraySize: computedSize };
-        }
+    if (computedSize !== undefined) {
+      value = { ...value, arraySize: computedSize };
     }
     
     this.state.variables.set(varNode.name, value);
     return value;
   }
 
-private visitAssignment(node: ASTNode): SymbolicValue {
+  private visitAssignment(node: ASTNode): SymbolicValue {
     const assignNode = node as AssignmentNode;
     
-    // 1. Resolve the value being assigned (RHS)
     const value = this.visit(assignNode.value);
     
-    // 2. Identify the target (LHS)
     if (typeof assignNode.target !== 'string') {
-        // LHS is complex (like arr[idx]). 
-        // We MUST visit it to trigger visitArrayAccess for bounds checking.
-        this.visit(assignNode.target as ASTNode); 
+      // Array access assignment
+      this.visit(assignNode.target as ASTNode); 
     } else {
-        // LHS is a simple variable (like x = 10)
-        const varName = assignNode.target;
-        const existing = this.state.variables.get(varName);
-        
-        // Preservation Logic: Update the value but keep the arraySize metadata
-        this.state.variables.set(varName, { 
-            ...value, 
-            arraySize: existing?.arraySize 
-        });
-        
-        // Mark as initialized in our set
-        this.state.initialized.add(varName);
+      const varName = assignNode.target;
+      const existing = this.state.variables.get(varName);
+      
+      // Track pointer assignments from new/malloc
+      if (assignNode.value && typeof assignNode.value !== 'string' && assignNode.value.type === 'FunctionCall') {  
+        const funcCall = assignNode.value as FunctionCallNode;
+        if (['new', 'malloc', 'calloc'].includes(funcCall.name)) {
+          this.state.allocatedPointers.set(varName, {
+            line: node.line || 0,
+            freed: false
+          });
+        }
+      }
+      
+      // Check for use-after-free
+      if (this.state.freedPointers.has(varName)) {
+        this.addSafetyCheck(
+          node.line || 0,
+          varName,
+          'UNSAFE',
+          `Use-after-free: Assigning to freed pointer '${varName}'`
+        );
+      }
+      
+      // Handle nullptr assignment
+      let newValue: SymbolicValue;
+      if (assignNode.value.type === 'Identifier' && (assignNode.value as any).name === 'nullptr') {
+        newValue = { type: 'nullptr' };
+      } else {
+        newValue = { ...value };
+      }
+      
+      if (existing?.arraySize !== undefined) {
+        newValue.arraySize = existing.arraySize;
+      }
+      
+      this.state.variables.set(varName, newValue);
+      this.state.initialized.add(varName);
     }
     
     return value;
-}
-  // ─────────────────────────────────────────────────────────────────────────────
-  // Control Flow
-  // ─────────────────────────────────────────────────────────────────────────────
+  }
 
   private visitIfStatement(node: ASTNode): SymbolicValue {
     const ifNode = node as IfStatementNode;
     const condVal = this.visit(ifNode.condition);
 
-    const savedState = this.cloneState();
-
-    // Branch Analysis: Only explore feasible paths if concrete
     let thenFeasible = true;
     let elseFeasible = true;
 
     if (condVal.type === 'concrete') {
       thenFeasible = condVal.value !== 0;
-      elseFeasible = !thenFeasible;
+      elseFeasible = condVal.value === 0;
+      
+      if (!thenFeasible) {
+        this.addSafetyCheck(node.line || 0, 'if_condition', 'WARNING',
+          'Condition is always false - then-branch is unreachable');
+      }
+      if (!elseFeasible && ifNode.elseBranch) {
+        this.addSafetyCheck(node.line || 0, 'if_condition', 'WARNING',
+          'Condition is always true - else-branch is unreachable');
+      }
     }
-
-    if (thenFeasible) {
-      this.addPathCondition(ifNode.condition, true);
-      ifNode.thenBranch.forEach((stmt: ASTNode) => this.visit(stmt));
-    }
-
-    if (elseFeasible && ifNode.elseBranch) {
-      this.state = savedState; // Reset to state before 'then'
-      this.addPathCondition(ifNode.condition, false);
-      ifNode.elseBranch.forEach((stmt: ASTNode) => this.visit(stmt));
-    }
-
-    return { type: 'unknown' };
-  }
-
-  private visitConditionalExpression(node: ASTNode): SymbolicValue {
-    const ternary = node as ConditionalExpressionNode;
-    const cond = this.visit(ternary.condition);
-
-    if (cond.type === 'concrete') {
-        if (cond.value !== 0) return this.visit(ternary.trueExpression);
-        else return this.visit(ternary.falseExpression);
-    }
-
-    this.visit(ternary.trueExpression);
-    this.visit(ternary.falseExpression);
-    return { type: 'unknown' };
-  }
-
-  private addPathCondition(cond: ASTNode, isPositive: boolean): void {
-    if (cond.type !== 'BinaryOp') return;
-    const bin = cond as BinaryOpNode;
     
-    let op = isPositive ? bin.operator : this.negateOperator(bin.operator);
-    if (!op) return;
+    this.detectContradictoryCondition(ifNode.condition, node.line || 0);
 
-    this.state.pathConditions.push({
-      variable: this.expressionToString(bin.left),
-      operator: op,
-      value: this.expressionToString(bin.right),
-    });
+    if (condVal.type === 'symbolic' || condVal.type === 'unknown') {
+      const savedState = this.cloneState();
+      
+      if (thenFeasible) {
+        ifNode.thenBranch.forEach(stmt => this.visit(stmt));
+      }
+      const thenState = this.cloneState();
+      
+      if (elseFeasible && ifNode.elseBranch) {
+        this.state = savedState;
+        ifNode.elseBranch.forEach(stmt => this.visit(stmt));
+      }
+      const elseState = this.cloneState();
+      
+      this.state = this.mergeStates(thenState, elseState);
+    } else {
+      if (thenFeasible) {
+        ifNode.thenBranch.forEach(stmt => this.visit(stmt));
+      } else if (elseFeasible && ifNode.elseBranch) {
+        ifNode.elseBranch.forEach(stmt => this.visit(stmt));
+      }
+    }
+
+    return { type: 'unknown' };
   }
 
-  private negateOperator(op: string): string | null {
-    const map: Record<string, string> = {
-      '==': '!=', '!=': '==', '<': '>=', '>=': '<', '>': '<=', '<=': '>'
+  private mergeStates(state1: SymbolicState, state2: SymbolicState): SymbolicState {
+    const merged: SymbolicState = {
+      variables: new Map(),
+      pathConditions: [...state1.pathConditions],
+      initialized: new Set([...state1.initialized, ...state2.initialized]),
+      allocatedPointers: new Map([...state1.allocatedPointers]),
+      freedPointers: new Set([...state1.freedPointers, ...state2.freedPointers])
     };
-    return map[op] || null;
+    
+    const allKeys = new Set([...state1.variables.keys(), ...state2.variables.keys()]);
+    allKeys.forEach(key => {
+      const val1 = state1.variables.get(key);
+      const val2 = state2.variables.get(key);
+      if (val1 && val2 && val1.type === 'concrete' && val2.type === 'concrete' && val1.value === val2.value) {
+        merged.variables.set(key, val1);
+      } else if (val1 || val2) {
+        merged.variables.set(key, { type: 'unknown', arraySize: val1?.arraySize || val2?.arraySize });
+      }
+    });
+    
+    return merged;
+  }
+
+  private detectContradictoryCondition(cond: ASTNode, line: number): void {
+    if (cond.type === 'BinaryOp') {
+      const binOp = cond as BinaryOpNode;
+      if (['<', '>', '<=', '>=', '==', '!='].includes(binOp.operator)) {
+        if (binOp.left.type === 'Identifier' && binOp.right.type === 'Identifier') {
+          const leftVar = (binOp.left as any).name;
+          const rightVar = (binOp.right as any).name;
+          
+          const leftVal = this.state.variables.get(leftVar);
+          const rightVal = this.state.variables.get(rightVar);
+          
+          if (leftVal?.type === 'concrete' && rightVal?.type === 'concrete') {
+            const left = leftVal.value;
+            const right = rightVal.value;
+            
+            let result = false;
+            switch (binOp.operator) {
+              case '<': result = left < right; break;
+              case '>': result = left > right; break;
+              case '<=': result = left <= right; break;
+              case '>=': result = left >= right; break;
+              case '==': result = left === right; break;
+              case '!=': result = left !== right; break;
+            }
+            
+            if (!result) {
+              this.addSafetyCheck(line, 'condition', 'WARNING',
+                `Contradictory condition: ${leftVar}(${left}) ${binOp.operator} ${rightVar}(${right}) is always false`);
+            }
+          }
+        }
+      }
+    }
   }
 
   private visitForLoop(node: ASTNode): SymbolicValue {
     const forNode = node as ForLoopNode;
     
-    // 1. Initialize the loop variable
-    if (forNode.init) this.visit(forNode.init);
-
-    // 2. Prepare the body statements for the scanner
-    // C++ bodies can be a single statement, an array, or a Block node
-    let bodyStatements: ASTNode[] = [];
-    if (Array.isArray(forNode.body)) {
-        bodyStatements = forNode.body;
-    } else if ((forNode.body as any).type === 'Block') {
-        bodyStatements = (forNode.body as any).statements || [];
-    } else {
-        bodyStatements = [forNode.body as ASTNode];
+    if (forNode.init) {
+      this.visit(forNode.init);
     }
 
-    // 3. The Gatekeeper: Identify if this loop hits zero
+    const bodyStatements = Array.isArray(forNode.body) ? forNode.body : [forNode.body as ASTNode];
+
     if (forNode.condition) {
-        const condStr = this.expressionToString(forNode.condition);
-        const updateStr = forNode.update ? this.expressionToString(forNode.update) : "";
+      const condStr = this.expressionToString(forNode.condition);
+      const updateStr = forNode.update ? this.expressionToString(forNode.update) : "";
 
-        const isBoundaryHit = />=|!=|>/.test(condStr) && /0/.test(condStr);
-        const isDecrementing = updateStr.includes('--') || updateStr.includes('-=');
+      const isBoundaryHit = />=|!=|>/.test(condStr) && /0/.test(condStr);
+      const isDecrementing = updateStr.includes('--') || updateStr.includes('-=');
 
-        if (isBoundaryHit && isDecrementing) {
-            const vars = this.extractVariables(forNode.condition);
-            vars.forEach(v => {
-                // Pass the ARRAY of statements to the recursive scanner
-                this.checkLoopBodyForZeroRisk(bodyStatements, v);
-            });
-        }
-    }
-
-    // 4. Normal execution: Visit the body correctly
-    // If it's an array, visit each item. If it's a node, visit the node.
-    if (Array.isArray(forNode.body)) {
-        forNode.body.forEach((stmt: ASTNode) => this.visit(stmt));
-    } else {
-        this.visit(forNode.body);
-    }
-    
-    if (forNode.update) this.visit(forNode.update);
-    
-    return { type: 'unknown' };
-}
-  // ==========================================================================
-  //  MISSING VISITORS (Fixes Unused Import Warnings)
-  // ==========================================================================
-
- private visitWhileLoop(node: ASTNode): SymbolicValue {
-    const loopNode = node as WhileLoopNode;
-    
-    // 1. Evaluate condition for dead code (e.g., while(0))
-    const cond = this.visit(loopNode.condition);
-    if (cond.type === 'concrete' && cond.value === 0) return { type: 'unknown' };
-
-    // 2. Normalize the body IMMEDIATELY
-    // This makes bodyStatements available to both the Gatekeeper and Normal Execution
-    let bodyStatements: ASTNode[] = [];
-    if (Array.isArray(loopNode.body)) {
-        bodyStatements = loopNode.body;
-    } else if ((loopNode.body as any).type === 'Block') {
-        bodyStatements = (loopNode.body as any).statements || [];
-    } else {
-        bodyStatements = [loopNode.body as ASTNode];
-    }
-
-    // 3. Boundary Simulation (The Gatekeeper)
-    const condStr = this.expressionToString(loopNode.condition);
-    const isBoundaryHit = />=|!=|>/.test(condStr) && /0/.test(condStr);
-    
-    if (isBoundaryHit) {
-        const loopVars = this.extractVariables(loopNode.condition);
-        loopVars.forEach(v => {
-            // Now bodyStatements is safely in scope
-            this.checkLoopBodyForZeroRisk(bodyStatements, v);
+      if (isBoundaryHit && isDecrementing) {
+        const vars = this.extractVariables(forNode.condition);
+        vars.forEach(v => {
+          this.checkLoopBodyForZeroRisk(bodyStatements, v);
         });
+      }
     }
 
-    // 4. Normal Execution
-    // We can now use the normalized array for a cleaner loop
-    bodyStatements.forEach(stmt => this.visit(stmt));
+    if (Array.isArray(forNode.body)) {
+      forNode.body.forEach((stmt: ASTNode) => this.visit(stmt));
+    } else if (forNode.body) {
+      this.visit(forNode.body);
+    }
+    
+    if (forNode.update) {
+      this.visit(forNode.update);
+    }
     
     return { type: 'unknown' };
-}
+  }
+
+  private visitWhileLoop(node: ASTNode): SymbolicValue {
+    const loopNode = node as WhileLoopNode;
+    const condVal = this.visit(loopNode.condition);
+
+    const condVars = this.extractVariables(loopNode.condition);
+    condVars.forEach(v => this.checkLoopBodyForZeroRisk(loopNode.body, v));
+
+    this.detectInfiniteLoop(loopNode);
+
+    loopNode.body.forEach(stmt => this.visit(stmt));
+    
+    if (!this.mayModifyCondition(loopNode.condition, loopNode.body)) {
+      this.addSafetyCheck(
+        node.line || 0,
+        'while_loop',
+        'WARNING',
+        'Infinite loop: Loop condition never changes'
+      );
+    }
+    
+    return { type: 'unknown' };
+  }
 
   private visitDoWhileLoop(node: ASTNode): SymbolicValue {
     const loop = node as DoWhileLoopNode;
-    // Do-while always executes body at least once
     loop.body.forEach(stmt => this.visit(stmt));
     this.visit(loop.condition);
     return { type: 'unknown' };
@@ -383,10 +509,9 @@ private visitAssignment(node: ASTNode): SymbolicValue {
   private visitSwitchStatement(node: ASTNode): SymbolicValue {
     const sw = node as SwitchStatementNode;
     this.visit(sw.condition);
-    // Visit all cases to ensure we catch errors in every branch
     sw.cases.forEach(c => {
-        if (c.value) this.visit(c.value);
-        c.statements.forEach(stmt => this.visit(stmt));
+      if (c.value) this.visit(c.value);
+      c.statements.forEach(stmt => this.visit(stmt));
     });
     return { type: 'unknown' };
   }
@@ -394,43 +519,66 @@ private visitAssignment(node: ASTNode): SymbolicValue {
   private visitReturnStatement(node: ASTNode): SymbolicValue {
     const ret = node as ReturnStatementNode;
     if (ret.value) {
-        // Visit return value to ensure variables used are initialized
-        return this.visit(ret.value);
+      return this.visit(ret.value);
     }
+    return { type: 'unknown' };
+  }
+
+  // NEW: Handle ternary operator
+  private visitConditionalExpression(node: ASTNode): SymbolicValue {
+    const ternary = node as ConditionalExpressionNode;
+    const condVal = this.visit(ternary.condition);
+    
+    if (condVal.type === 'concrete') {
+      return condVal.value !== 0 
+        ? this.visit(ternary.trueExpression)
+        : this.visit(ternary.falseExpression);
+    }
+    
+    // Unknown condition - visit both branches
+    this.visit(ternary.trueExpression);
+    this.visit(ternary.falseExpression);
     return { type: 'unknown' };
   }
 
   private visitInitializerList(node: ASTNode): SymbolicValue {
     const list = node as InitializerListNode;
-    // Visit all elements (e.g., int a[] = {1, 2, x}) to check 'x'
     list.values.forEach(val => this.visit(val));
     return { type: 'unknown' };
   }
 
   private visitGlobalAccess(node: ASTNode): SymbolicValue {
     const global = node as GlobalAccessNode;
-    // Check if the global variable exists/is initialized
     return this.visitIdentifier({ type: 'Identifier', name: global.name } as any);
   }
 
   private visitLoopControl(node: ASTNode): SymbolicValue {
-    // node is LoopControlNode (break/continue). 
-    // Logic: No specific symbolic value, just flow control.
-    const ctrl = node as LoopControlNode; 
     return { type: 'unknown' }; 
   }
 
   private visitCastExpression(node: ASTNode): SymbolicValue {
     const cast = node as CastExpressionNode;
-    // Logic: The value survives the cast, check the operand
-    return this.visit(cast.operand);
+    const operandVal = this.visit(cast.operand);
+    
+    // Check for potential overflow in cast
+    if (operandVal.type === 'concrete') {
+      if (cast.targetType === 'int' && (operandVal.value > this.INT_MAX || operandVal.value < this.INT_MIN)) {
+        this.addSafetyCheck(
+          node.line || 0,
+          'cast',
+          'WARNING',
+          `Integer overflow in cast: ${operandVal.value} exceeds int range`
+        );
+      }
+    }
+    
+    return operandVal;
   }
 
   private visitSizeofExpression(node: ASTNode): SymbolicValue {
     const sizeof = node as SizeofExpressionNode;
-    // Logic: Verify the variable inside sizeof exists
     this.visit(sizeof.value);
-    return { type: 'concrete', value: 4 }; // Mock size
+    return { type: 'concrete', value: 4 }; // Simplified - returns size in bytes
   }
 
   private visitLambdaExpression(node: ASTNode): SymbolicValue {
@@ -438,134 +586,334 @@ private visitAssignment(node: ASTNode): SymbolicValue {
     const previousScope = this.currentScope;
     this.currentScope = 'lambda';
     
-    // Lambdas have their own scope
     lambda.body.forEach(stmt => this.visit(stmt));
     
     this.currentScope = previousScope;
     return { type: 'unknown' };
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
-  // Operations & Safety Checks
-  // ─────────────────────────────────────────────────────────────────────────────
+  private visitFunctionCall(node: ASTNode): SymbolicValue {
+    const funcCall = node as FunctionCallNode;
+    
+    // Process arguments
+    funcCall.arguments.forEach(arg => this.visit(arg));
+    
+    // Handle delete/free
+    if (['delete', 'free'].includes(funcCall.name)) {
+      if (funcCall.arguments.length > 0 && funcCall.arguments[0].type === 'Identifier') {
+        const ptrName = (funcCall.arguments[0] as any).name;
+        
+        // Check for double-free
+        if (this.state.freedPointers.has(ptrName)) {
+          this.addSafetyCheck(
+            node.line || 0,
+            ptrName,
+            'UNSAFE',
+            `Double-free detected: Pointer '${ptrName}' freed twice`
+          );
+        } else {
+          const allocInfo = this.state.allocatedPointers.get(ptrName);
+          if (allocInfo && !allocInfo.freed) {
+            allocInfo.freed = true;
+            this.state.freedPointers.add(ptrName);
+          } else if (!allocInfo) {
+            this.addSafetyCheck(
+              node.line || 0,
+              ptrName,
+              'WARNING',
+              `Freeing untracked pointer '${ptrName}' - was it allocated?`
+            );
+          }
+        }
+      }
+    }
+    
+    // Handle unsafe string operations
+    if (['strcpy', 'strcat', 'sprintf'].includes(funcCall.name)) {
+      this.addSafetyCheck(
+        node.line || 0,
+        funcCall.name,
+        'WARNING',
+        `Potentially unsafe string operation '${funcCall.name}()' - consider using safer alternatives`
+      );
+    }
+    
+    // Handle memcpy/memmove buffer operations
+    if (['memcpy', 'memmove'].includes(funcCall.name) && funcCall.arguments.length >= 3) {
+      const sizeArg = funcCall.arguments[2];
+      const sizeVal = this.visit(sizeArg);
+      
+      if (sizeVal.type === 'concrete' && sizeVal.value < 0) {
+        this.addSafetyCheck(
+          node.line || 0,
+          funcCall.name,
+          'UNSAFE',
+          `Negative size in ${funcCall.name}(): ${sizeVal.value}`
+        );
+      }
+    }
+    
+    return { type: 'unknown' };
+  }
 
   private visitBinaryOp(node: ASTNode): SymbolicValue {
     const binOp = node as BinaryOpNode;
     const left = this.visit(binOp.left);
 
-    // 1. Handle Short-Circuiting (&&)
+    // Short-circuit evaluation
     if (binOp.operator === '&&') {
-        if (left.type === 'concrete' && left.value === 0) return left; // false && anything = false
-        const right = this.visit(binOp.right);
-        if (left.type === 'concrete' && right.type === 'concrete') {
-            return { type: 'concrete', value: (left.value !== 0 && right.value !== 0) ? 1 : 0 };
-        }
-        return { type: 'unknown' };
-    }
-
-    // 2. Handle Short-Circuiting (||)
-    if (binOp.operator === '||') {
-        if (left.type === 'concrete' && left.value !== 0) return { type: 'concrete', value: 1 }; // true || anything = true
-        const right = this.visit(binOp.right);
-        if (left.type === 'concrete' && right.type === 'concrete') {
-            return { type: 'concrete', value: (left.value !== 0 || right.value !== 0) ? 1 : 0 };
-        }
-        return { type: 'unknown' };
-    }
-
-    // 3. Handle Standard Math Operators
-    const right = this.visit(binOp.right);
-    
-    // Safety check for division
-    if (binOp.operator === '/' || binOp.operator === '%') {
-        this.checkDivisionByZero(binOp, right);
-    }
-
-    if (left.type === 'concrete' && right.type === 'concrete') {
-        return this.evaluateConcrete(binOp.operator, left.value, right.value);
-    }
-    
-    return { type: 'unknown' }; 
-}
-
-  private visitUnaryOp(node: ASTNode): SymbolicValue {
-    const u = node as UnaryOpNode;
-    const name = typeof u.operand === 'string' ? u.operand : (u.operand as any).name;
-    if (!name) return { type: 'unknown' };
-
-    const sym = this.state.variables.get(name);
-
-    // 1. Handle Pointer Safety
-    if (node.type === 'Dereference') {
-      if (!sym || (sym.type === 'symbolic' && sym.nullable && !this.provenNotNull(name))) {
-         this.addSafetyCheck(node.line || 0, 'pointer_dereference', 'WARNING', `Possible null pointer dereference: *${name}`);
+      if (left.type === 'concrete' && left.value === 0) return left;
+      const right = this.visit(binOp.right);
+      if (left.type === 'concrete' && right.type === 'concrete') {
+        return { type: 'concrete', value: (left.value !== 0 && right.value !== 0) ? 1 : 0 };
       }
       return { type: 'unknown' };
     }
 
-    // 2. Catch Arithmetic on Uninitialized (Garbage) Values
+    if (binOp.operator === '||') {
+      if (left.type === 'concrete' && left.value !== 0) return { type: 'concrete', value: 1 };
+      const right = this.visit(binOp.right);
+      if (left.type === 'concrete' && right.type === 'concrete') {
+        return { type: 'concrete', value: (left.value !== 0 || right.value !== 0) ? 1 : 0 };
+      }
+      return { type: 'unknown' };
+    }
+
+    const right = this.visit(binOp.right);
+    
+    // Check division and modulo by zero
+    if (binOp.operator === '/' || binOp.operator === '%') {
+      this.checkDivisionByZero(binOp, right);
+    }
+    
+    // Check bitwise shifts
+    if (binOp.operator === '<<' || binOp.operator === '>>') {
+      this.checkShiftOperation(binOp, left, right);
+    }
+
+    // Evaluate concrete operations
+    if (left.type === 'concrete' && right.type === 'concrete') {
+      const result = this.evaluateConcrete(binOp.operator, left.value, right.value);
+      
+      // Check for integer overflow
+     if (result.type === 'concrete' && ['+', '-', '*'].includes(binOp.operator)) {
+//                                   ✅ Correct
+        if (result.value > this.INT_MAX || result.value < this.INT_MIN) {
+          this.addSafetyCheck(
+            node.line || 0,
+            'arithmetic',
+            'WARNING',
+            `Integer overflow in expression: ${left.value} ${binOp.operator} ${right.value} = ${result.value}`
+          );
+        }
+      }
+      
+      return result;
+    }
+    
+    return { type: 'unknown' }; 
+  }
+
+  private visitUnaryOp(node: ASTNode): SymbolicValue {
+    const u = node as UnaryOpNode;
+    const name = typeof u.operand === 'string' ? u.operand : (u.operand as any)?.name;
+    if (!name) {
+      // Handle complex operands
+      if (typeof u.operand !== 'string') {
+        return this.visit(u.operand as ASTNode);
+      }
+      return { type: 'unknown' };
+    }
+
+    const sym = this.state.variables.get(name);
+
+    // Handle dereference
+    if (node.type === 'Dereference') {
+      // Check use-after-free
+      if (this.state.freedPointers.has(name)) {
+        this.addSafetyCheck(
+          node.line || 0, 
+          'pointer_dereference', 
+          'UNSAFE', 
+          `Use-after-free: Dereferencing freed pointer '${name}'`
+        );
+      }
+      // Check nullptr dereference
+      else if (sym?.type === 'nullptr') {
+        this.addSafetyCheck(
+          node.line || 0,
+          'pointer_dereference',
+          'UNSAFE',
+          `Null pointer dereference: Dereferencing nullptr '${name}'`
+        );
+      }
+      // Check potentially null pointer
+      else if (!sym || (sym.type === 'symbolic' && (sym as any).nullable && !this.provenNotNull(name))) {
+        this.addSafetyCheck(
+          node.line || 0, 
+          'pointer_dereference', 
+          'WARNING', 
+          `Possible null pointer dereference: *${name}`
+        );
+      }
+      // Check uninitialized pointer
+      else if (sym?.type === 'pointer' && (sym as any).isNull) {
+        this.addSafetyCheck(
+          node.line || 0,
+          'pointer_dereference',
+          'UNSAFE',
+          `Null pointer dereference: Dereferencing uninitialized pointer '${name}'`
+        );
+      }
+      return { type: 'unknown' };
+    }
+
+    // Handle address-of operator
+    if (node.type === 'AddressOf') {
+      return { type: 'pointer', target: name, isNull: false };
+    }
+
+    // Handle increment/decrement
     if (['PreIncrement', 'PostIncrement', 'PreDecrement', 'PostDecrement'].includes(node.type)) {
       if (!this.state.initialized.has(name)) {
-        this.addSafetyCheck(node.line || 0, 'arithmetic', 'WARNING', `Operation on uninitialized variable: ${name}`);
+        this.addSafetyCheck(
+          node.line || 0, 
+          'arithmetic', 
+          'WARNING', 
+          `Operation on uninitialized variable: ${name}`
+        );
       }
     }
 
-    // 3. Process Concrete Math and Preserve Metadata
     if (sym?.type === 'concrete') {
       let val = sym.value;
       if (node.type.includes('Increment')) val++;
       if (node.type.includes('Decrement')) val--;
       
-      // Update state: ensure arraySize metadata survives the increment
-      const newValue: SymbolicValue = { type: 'concrete', value: val, arraySize: sym.arraySize };
-      this.state.variables.set(name, newValue);
+      // Check for overflow
+      if (val > this.INT_MAX || val < this.INT_MIN) {
+        this.addSafetyCheck(
+          node.line || 0,
+          name,
+          'WARNING',
+          `Integer overflow in ${node.type} operation on '${name}'`
+        );
+      }
       
-      // Mark as initialized now that a concrete operation has occurred
+      const newValue: SymbolicValue = { 
+        type: 'concrete', 
+        value: val, 
+        arraySize: sym.arraySize
+      };
+      this.state.variables.set(name, newValue);
       this.state.initialized.add(name);
       
       return newValue;
     }
     
     return { type: 'unknown' };
-}
+  }
 
- // MODIFIED: Added specific error code arguments ('array_access', 'UNSAFE')
-private visitArrayAccess(node: ASTNode): SymbolicValue {
-    const access = node as ArrayAccessNode;
-    // CRITICAL: Resolve the index (handles both numbers and variables like 'idx')
-    const indexRes = this.visit(access.indices[0]); 
-    const arrVar = this.state.variables.get(access.name);
+  private visitArrayAccess(node: ASTNode): SymbolicValue {
+    const arrayNode = node as ArrayAccessNode;
+    const arrName = arrayNode.name;
+    
+    const arrSymbol = this.state.variables.get(arrName);
+    const arraySize = arrSymbol?.arraySize;
 
-    if (arrVar && 'arraySize' in arrVar && arrVar.arraySize !== undefined) {
-        const size = arrVar.arraySize; 
+    arrayNode.indices.forEach((indexNode, dim) => {
+      const indexVal = this.visit(indexNode);
+      
+      if (arraySize !== undefined) {
+        if (indexVal.type === 'concrete') {
+          const idx = indexVal.value;
+          
+          if (idx < 0) {
+            this.addSafetyCheck(
+              node.line || 0,
+              `${arrName}[${idx}]`,
+              'UNSAFE',
+              `Array index out of bounds: ${arrName}[${idx}] (index is negative)`
+            );
+          }
+          else if (idx >= arraySize) {
+            this.addSafetyCheck(
+              node.line || 0,
+              `${arrName}[${idx}]`,
+              'UNSAFE',
+              `Array index out of bounds: ${arrName}[${idx}] exceeds size ${arraySize}`
+            );
+          }
+          else {
+            this.addSafetyCheck(
+              node.line || 0,
+              `${arrName}[${idx}]`,
+              'SAFE',
+              `Array access is safe: index ${idx} within bounds [0, ${arraySize-1}]`
+            );
+          }
+        } else {
+          // Dynamic index - warn about potential out of bounds
+          this.addSafetyCheck(
+            node.line || 0,
+            `${arrName}[?]`,
+            'WARNING',
+            `Array index is not constant - ensure it stays within bounds [0, ${arraySize-1}]`
+          );
+        }
+      }
+    });
 
-        if (indexRes.type === 'concrete') {
-            if (indexRes.value < 0 || indexRes.value >= size) {
-                this.addSafetyCheck(
-                    node.line || 0,
-                    'array_access', 
-                    'UNSAFE', 
-                    `Array index out of bounds: Index ${indexRes.value} is outside valid range [0, ${size - 1}]`
-                );
-            }
-        } 
-    }
     return { type: 'unknown' };
-}
-  // ─────────────────────────────────────────────────────────────────────────────
-  // Literals & Helpers
-  // ─────────────────────────────────────────────────────────────────────────────
+  }
 
-  private visitInteger(node: any): SymbolicValue { return { type: 'concrete', value: node.value }; }
-  private visitFloat(node: any): SymbolicValue { return { type: 'concrete', value: node.value }; }
-  // MODIFIED: Added arguments for read variable check
-private visitIdentifier(node: ASTNode): SymbolicValue {
+  // Literal visitors
+  private visitInteger(node: any): SymbolicValue { 
+    return { type: 'concrete', value: node.value }; 
+  }
+  
+  private visitFloat(node: any): SymbolicValue { 
+    return { type: 'concrete', value: node.value }; 
+  }
+  
+  private visitChar(node: any): SymbolicValue {
+    return { type: 'concrete', value: node.value.charCodeAt(0) };
+  }
+  
+  private visitString(node: any): SymbolicValue {
+    return { type: 'pointer', target: 'string_literal', isNull: false };
+  }
+  
+  private visitIdentifier(node: ASTNode): SymbolicValue {
     const name = (node as any).name;
-    const val = this.state.variables.get(name);
-    if (val && val.type !== 'concrete' && !this.state.initialized.has(name)) {
-      // FIXED: Added all 4 arguments
-      this.addSafetyCheck(node.line || 0, 'read_variable', 'WARNING', `Use of uninitialized variable '${name}'`);
+    
+    // Handle nullptr
+    if (name === 'nullptr') {
+      return { type: 'nullptr' };
     }
+    
+    const val = this.state.variables.get(name);
+    
+    // Check for use-after-free
+    if (this.state.freedPointers.has(name)) {
+      this.addSafetyCheck(
+        node.line || 0, 
+        'read_variable', 
+        'UNSAFE', 
+        `Use-after-free: Using freed pointer '${name}'`
+      );
+    }
+    
+    // Check for uninitialized variable
+    if (val && val.type !== 'concrete' && val.type !== 'nullptr' && !this.state.initialized.has(name)) {
+      this.addSafetyCheck(
+        node.line || 0, 
+        'read_variable', 
+        'WARNING', 
+        `Use of uninitialized variable '${name}'`
+      );
+    }
+    
     return val || { type: 'unknown' };
   }
 
@@ -573,59 +921,111 @@ private visitIdentifier(node: ASTNode): SymbolicValue {
     const val = String(node.value);
     if (val === 'true') return { type: 'concrete', value: 1 };
     if (val === 'false') return { type: 'concrete', value: 0 };
+    if (val === 'nullptr') return { type: 'nullptr' };
     return { type: 'concrete', value: parseFloat(val) || 0 };
   }
 
-  // MODIFIED: Added arguments for both UNSAFE and WARNING cases
-private checkDivisionByZero(node: BinaryOpNode, divisor: SymbolicValue): void {
+  // Helper methods
+  private checkDivisionByZero(node: BinaryOpNode, divisor: SymbolicValue): void {
     if (divisor.type === 'concrete' && divisor.value === 0) {
-      // FIXED: Added all 4 arguments
-      this.addSafetyCheck(node.line || 0, this.expressionToString(node), 'UNSAFE', 'Division by zero detected');
+      this.addSafetyCheck(
+        node.line || 0, 
+        this.expressionToString(node), 
+        'UNSAFE', 
+        `${node.operator === '/' ? 'Division' : 'Modulo'} by zero detected`
+      );
     } else if (divisor.type === 'symbolic' && !this.provenNotNull(divisor.name)) {
-      // FIXED: Added all 4 arguments
-      this.addSafetyCheck(node.line || 0, this.expressionToString(node), 'WARNING', 'Possible division by zero');
+      this.addSafetyCheck(
+        node.line || 0, 
+        this.expressionToString(node), 
+        'WARNING', 
+        `Possible ${node.operator === '/' ? 'division' : 'modulo'} by zero`
+      );
     }
   }
 
-private checkLoopBodyForZeroRisk(body: ASTNode[] | ASTNode | null, varName: string): void {
-    const cleanVarName = varName.trim(); // 🚨 CLEAN THE VARIABLE NAME
+  private checkShiftOperation(node: BinaryOpNode, left: SymbolicValue, right: SymbolicValue): void {
+    if (right.type === 'concrete') {
+      // Check for negative shift
+      if (right.value < 0) {
+        this.addSafetyCheck(
+          node.line || 0,
+          this.expressionToString(node),
+          'UNSAFE',
+          `Bitwise shift by negative amount: ${right.value}`
+        );
+      }
+      // Check for shift >= width of type (assuming 32-bit int)
+      else if (right.value >= 32) {
+        this.addSafetyCheck(
+          node.line || 0,
+          this.expressionToString(node),
+          'UNSAFE',
+          `Bitwise shift by ${right.value} bits exceeds type width (32 bits)`
+        );
+      }
+    }
+    
+    // Check for shifting negative value (left shift)
+    if (node.operator === '<<' && left.type === 'concrete' && left.value < 0) {
+      this.addSafetyCheck(
+        node.line || 0,
+        this.expressionToString(node),
+        'WARNING',
+        'Left shift of negative value is undefined behavior'
+      );
+    }
+  }
+
+  private checkLoopBodyForZeroRisk(body: ASTNode[] | ASTNode | null, varName: string): void {
+    const cleanVarName = varName.trim();
     const walk = (n: any) => {
-        if (!n || typeof n === 'string') return;
-        
-        if (n.type === 'BinaryOp' && (n.operator === '/' || n.operator === '%')) {
-            const divisorVars = this.extractVariables(n.right);
-            // Check against the cleaned name
-            if (Array.from(divisorVars).some(v => v.trim() === cleanVarName)) {
-                this.addSafetyCheck(
-                    n.line || 0, 
-                    cleanVarName, 
-                    'UNSAFE', 
-                    `Division by zero detected: Loop variable '${cleanVarName}' will hit 0.`
-                );
-            }
+      if (!n || typeof n === 'string') return;
+      
+      if (n.type === 'BinaryOp' && (n.operator === '/' || n.operator === '%')) {
+        const divisorVars = this.extractVariables(n.right);
+        if (Array.from(divisorVars).some(v => v.trim() === cleanVarName)) {
+          this.addSafetyCheck(
+            n.line || 0, 
+            cleanVarName, 
+            'UNSAFE', 
+            `${n.operator === '/' ? 'Division' : 'Modulo'} by zero detected: Loop variable '${cleanVarName}' will hit 0`
+          );
         }
-        
-        // 2. Deep Recursion
-        if (Array.isArray(n)) n.forEach(walk);
-        else {
-            if (n.body) walk(n.body);
-            if (n.statements) walk(n.statements);
-            if (n.expression) walk(n.expression);
-            if (n.value) walk(n.value);
-            if (n.thenBranch) walk(n.thenBranch);
-            if (n.elseBranch) walk(n.elseBranch);
-            if (n.left) walk(n.left);
-            if (n.right) walk(n.right);
-        }
+      }
+      
+      if (Array.isArray(n)) n.forEach(walk);
+      else {
+        if (n.body) walk(n.body);
+        if (n.statements) walk(n.statements);
+        if (n.expression) walk(n.expression);
+        if (n.value) walk(n.value);
+        if (n.thenBranch) walk(n.thenBranch);
+        if (n.elseBranch) walk(n.elseBranch);
+        if (n.left) walk(n.left);
+        if (n.right) walk(n.right);
+      }
     };
 
-    // Entry point: handle both single nodes and arrays of nodes
     if (Array.isArray(body)) {
-        body.forEach(walk);
+      body.forEach(walk);
     } else {
-        walk(body);
+      walk(body);
     }
-}
+  }
+
+  private checkForMemoryLeaks(): void {
+    this.state.allocatedPointers.forEach((info, ptr) => {
+      if (!info.freed) {
+        this.addSafetyCheck(
+          info.line,
+          ptr,
+          'WARNING',
+          `Memory leak: Pointer '${ptr}' was allocated but never freed`
+        );
+      }
+    });
+  }
 
   private provenNotNull(name: string): boolean {
     return this.state.pathConditions.some(c => 
@@ -642,29 +1042,39 @@ private checkLoopBodyForZeroRisk(body: ASTNode[] | ASTNode | null, varName: stri
   private extractVariables(node: any): Set<string> {
     const vars = new Set<string>();
     const walk = (n: any) => {
-        if (!n) return;
-        if (typeof n === 'string') {
-            vars.add(n);
-            return;
-        }
-        if (n.type === 'Identifier') {
-            const name = n.name || n.value || n.id;
-            if (name) vars.add(name);
-        }
-        if (n.left) walk(n.left);
-        if (n.right) walk(n.right);
-        if (n.expression) walk(n.expression);
-        if (n.value) walk(n.value);
+      if (!n) return;
+      if (typeof n === 'string') {
+        vars.add(n);
+        return;
+      }
+      if (n.type === 'Identifier') {
+        const name = n.name || n.value || n.id;
+        if (name) vars.add(name);
+      }
+      if (n.left) walk(n.left);
+      if (n.right) walk(n.right);
+      if (n.expression) walk(n.expression);
+      if (n.value) walk(n.value);
     };
     walk(node);
     return vars;
-}
+  }
 
   private extractModifiedVariables(body: ASTNode[]): Set<string> {
     const mods = new Set<string>();
     body.forEach(s => {
-      if (s.type === 'Assignment') mods.add((s as AssignmentNode).target as string);
-      if (s.type.includes('Increment')) mods.add((s as any).operand);
+      if (s.type === 'Assignment') {
+        const target = (s as AssignmentNode).target;
+        if (typeof target === 'string') {
+          mods.add(target);
+        }
+      }
+      if (s.type.includes('Increment') || s.type.includes('Decrement')) {
+        const operand = (s as any).operand;
+        if (typeof operand === 'string') {
+          mods.add(operand);
+        }
+      }
     });
     return mods;
   }
@@ -676,58 +1086,63 @@ private checkLoopBodyForZeroRisk(body: ASTNode[] | ASTNode | null, varName: stri
       case '-': res = l - r; break;
       case '*': res = l * r; break;
       case '/': res = r !== 0 ? Math.trunc(l / r) : 0; break;
+      case '%': res = r !== 0 ? l % r : 0; break;
       case '&&': res = (l && r) ? 1 : 0; break;
       case '||': res = (l || r) ? 1 : 0; break;
       case '==': res = (l === r) ? 1 : 0; break;
       case '!=': res = (l !== r) ? 1 : 0; break;
-      // ADD THESE:
       case '<':  res = l < r ? 1 : 0; break;
       case '>':  res = l > r ? 1 : 0; break;
       case '<=': res = l <= r ? 1 : 0; break;
       case '>=': res = l >= r ? 1 : 0; break;
+      case '&':  res = l & r; break;
+      case '|':  res = l | r; break;
+      case '^':  res = l ^ r; break;
+      case '<<': res = r >= 0 && r < 32 ? l << r : 0; break;
+      case '>>': res = r >= 0 && r < 32 ? l >> r : 0; break;
       default: return { type: 'unknown' };
     }
     return { type: 'concrete', value: res };
-}
+  }
 
   private expressionToString(node: any): string {
     if (!node) return "";
     if (typeof node === 'string') return node;
 
     if (node.type === 'BinaryOp') {
-        return `${this.expressionToString(node.left)} ${node.operator} ${this.expressionToString(node.right)}`;
+      return `${this.expressionToString(node.left)} ${node.operator} ${this.expressionToString(node.right)}`;
     }
     
-    // PEG.js robustness: Check name, value, id, and the node itself
     if (node.type === 'Identifier') {
-        return node.name || node.value || node.id || (typeof node === 'string' ? node : "?");
+      return node.name || node.value || node.id || "?";
     }
     
     if (node.type === 'Integer' || node.type === 'Literal') {
-        return String(node.value);
+      return String(node.value);
     }
 
     if (node.type === 'PostDecrement' || node.type === 'PreDecrement') {
-    return node.operand + '--';
-}
+      return node.operand + '--';
+    }
 
-if (node.type === 'PostIncrement' || node.type === 'PreIncrement') {
-    return node.operand + '++';
-}
+    if (node.type === 'PostIncrement' || node.type === 'PreIncrement') {
+      return node.operand + '++';
+    }
     
     return "?";
-}
+  }
 
   private cloneState(): SymbolicState {
     return {
       variables: new Map(this.state.variables),
       pathConditions: [...this.state.pathConditions],
-      initialized: new Set(this.state.initialized)
+      initialized: new Set(this.state.initialized),
+      allocatedPointers: new Map(this.state.allocatedPointers),
+      freedPointers: new Set(this.state.freedPointers)
     };
   }
 
-  // MODIFIED: Changed signature to accept 4 arguments instead of 2
-private addSafetyCheck(line: number, operation: string, status: 'SAFE' | 'UNSAFE' | 'WARNING', message: string) {
+  private addSafetyCheck(line: number, operation: string, status: 'SAFE' | 'UNSAFE' | 'WARNING', message: string): void {
     this.safetyChecks.push({
       line,
       operation,
@@ -735,8 +1150,12 @@ private addSafetyCheck(line: number, operation: string, status: 'SAFE' | 'UNSAFE
       message
     });
   }
+
+  // Additional visitor methods for completeness
   private visitBlock(node: any): SymbolicValue {
-    node.statements?.forEach((s: ASTNode) => this.visit(s));
+    if (node.statements) {
+      node.statements.forEach((s: ASTNode) => this.visit(s));
+    }
     return { type: 'unknown' };
   }
 
@@ -744,54 +1163,95 @@ private addSafetyCheck(line: number, operation: string, status: 'SAFE' | 'UNSAFE
     return this.visit(node.expression);
   }
 
-  private visitParameter(node: any): SymbolicValue { return { type: 'unknown' }; }
-  private visitType(node: any): SymbolicValue { return { type: 'unknown' }; }
-
-  // ─────────────────────────────────────────────────────────────────────────────
-  // Stream I/O Handlers (NEW: Full chaining support)
-  // ─────────────────────────────────────────────────────────────────────────────
+  private visitParameter(node: any): SymbolicValue { 
+    return { type: 'unknown' }; 
+  }
 
   private visitCinStatement(node: ASTNode): SymbolicValue {
-      const cinNode = node as any;
+    const cinNode = node as any;
+    
+    if (cinNode.targets && Array.isArray(cinNode.targets)) {
+      cinNode.targets.forEach((target: string | ASTNode) => {
+        if (typeof target === 'string') {
+          this.state.initialized.add(target);
+          this.state.variables.set(target, { type: 'symbolic', name: target, constraints: [] });
+        } else if (target.type === 'ArrayAccess') {
+          const arrayAccess = target as any;
+          this.visit(arrayAccess);
+          this.state.initialized.add(arrayAccess.name);
+        }
+      });
+    } else if (cinNode.target) {
+      this.state.initialized.add(cinNode.target);
+      this.state.variables.set(cinNode.target, { type: 'symbolic', name: cinNode.target, constraints: [] });
+    }
+    
+    return { type: 'unknown' };
+  }
+
+  private detectInfiniteLoop(loopNode: WhileLoopNode): void {
+    const condVars = this.extractVariables(loopNode.condition);
+    
+    const walk = (stmt: any) => {
+      if (!stmt) return;
       
-      // NEW: Handle chained cin (cin >> x >> y >> arr[i])
-      if (cinNode.targets && Array.isArray(cinNode.targets)) {
-          cinNode.targets.forEach((target: string | ASTNode) => {
-              if (typeof target === 'string') {
-                  // Simple identifier
-                  this.state.initialized.add(target);
-                  this.state.variables.set(target, { type: 'symbolic', name: target, constraints: [] });
-              } else if (target.type === 'ArrayAccess') {
-                  // Array element: mark array as initialized, validate bounds
-                  const arrayAccess = target as any;
-                  this.visit(arrayAccess); // Triggers bounds checking
-                  this.state.initialized.add(arrayAccess.name);
-              }
-          });
-      }
-      // LEGACY: Handle old single-target format
-      else if (cinNode.target) {
-          this.state.initialized.add(cinNode.target);
-          this.state.variables.set(cinNode.target, { type: 'symbolic', name: cinNode.target, constraints: [] });
+      if (stmt.type === 'Assignment') {
+        const target = typeof stmt.target === 'string' ? stmt.target : null;
+        if (target && condVars.has(target)) {
+          const savedState = this.cloneState();
+          
+          const valueResult = this.visit(stmt.value);
+          if (valueResult.type === 'concrete') {
+            const mockState = this.cloneState();
+            mockState.variables.set(target, valueResult);
+            
+            const prevState = this.state;
+            this.state = mockState;
+            const condResult = this.visit(loopNode.condition);
+            this.state = prevState;
+            
+            if (condResult.type === 'concrete' && condResult.value !== 0) {
+              this.addSafetyCheck(
+                stmt.line || 0,
+                target,
+                'UNSAFE',
+                `Infinite loop detected: '${target}' is set to ${valueResult.value}, keeping condition always true`
+              );
+            }
+          }
+          
+          this.state = savedState;
+        }
       }
       
-      return { type: 'unknown' };
+      if (Array.isArray(stmt)) {
+        stmt.forEach(walk);
+      } else {
+        if (stmt.body) walk(stmt.body);
+        if (stmt.statements) walk(stmt.statements);
+        if (stmt.thenBranch) walk(stmt.thenBranch);
+        if (stmt.elseBranch) walk(stmt.elseBranch);
+      }
+    };
+    
+    if (Array.isArray(loopNode.body)) {
+      loopNode.body.forEach(walk);
+    } else if (loopNode.body) {
+      walk(loopNode.body);
+    }
   }
 
   private visitCoutStatement(node: ASTNode): SymbolicValue {
-      const coutNode = node as any;
-      
-      // NEW: Handle chained cout (cout << a << b << c)
-      if (coutNode.values && Array.isArray(coutNode.values)) {
-          coutNode.values.forEach((expr: ASTNode) => {
-              this.visit(expr); // Evaluate each expression (triggers safety checks)
-          });
-      }
-      // LEGACY: Handle old single-value format
-      else if (coutNode.value) {
-          this.visit(coutNode.value);
-      }
-      
-      return { type: 'unknown' };
+    const coutNode = node as any;
+    
+    if (coutNode.values && Array.isArray(coutNode.values)) {
+      coutNode.values.forEach((expr: ASTNode) => {
+        this.visit(expr);
+      });
+    } else if (coutNode.value) {
+      this.visit(coutNode.value);
+    }
+    
+    return { type: 'unknown' };
   }
 }

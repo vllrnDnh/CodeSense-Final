@@ -36,6 +36,7 @@ const TOKEN_PATTERNS: Array<{ type: Token['type']; pattern: RegExp }> = [
   { type: 'Literal', pattern: /^"([^"\\]|\\.)*"/ }, 
   
   // 7. Identifiers
+  { type: 'Identifier', pattern: /^(cout|cin|endl|string)\b/ },
   { type: 'Identifier', pattern: /^[a-zA-Z_][a-zA-Z0-9_]*/ },
   
   // 8. Compound Operators (Longest matches first: 3 chars then 2 chars)

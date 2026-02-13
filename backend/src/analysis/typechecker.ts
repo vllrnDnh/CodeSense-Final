@@ -72,12 +72,61 @@ export class TypeChecker {
     this.currentFunction = null;
     this.functionHasReturn = false;
     
+    // Initialize standard library symbols
+    this.initializeStandardLibrary();
+    
     this.visit(ast);
     this.performDeadCodeAnalysis();
     
     return {
       symbolTable: this.symbolTable,
       errors: this.errors,
+    };
+  }
+  
+  /**
+   * Pre-register C++ standard library symbols (iostream, etc.)
+   */
+  private initializeStandardLibrary(): void {
+    // iostream objects
+    this.symbolTable['global::cout'] = {
+      name: 'cout',
+      type: 'ostream',
+      line: 0,
+      scope: 'global',
+      initialized: true,
+      isDefined: true,
+      kind: 'variable'
+    };
+    
+    this.symbolTable['global::cin'] = {
+      name: 'cin',
+      type: 'istream',
+      line: 0,
+      scope: 'global',
+      initialized: true,
+      isDefined: true,
+      kind: 'variable'
+    };
+    
+    this.symbolTable['global::endl'] = {
+      name: 'endl',
+      type: 'manipulator',
+      line: 0,
+      scope: 'global',
+      initialized: true,
+      isDefined: true,
+      kind: 'variable'
+    };
+    
+    this.symbolTable['global::string'] = {
+      name: 'string',
+      type: 'class',
+      line: 0,
+      scope: 'global',
+      initialized: true,
+      isDefined: true,
+      kind: 'variable'
     };
   }
   
@@ -199,29 +248,33 @@ export class TypeChecker {
     
     // 3. Register Parameters in the new scope
     // 3. Register Parameters in the new scope
+// 3. Register Parameters in the new scope
 funcNode.params.forEach((param: ParameterNode) => {
-    // Validate that function definitions have named parameters
     if (!param.name) {
         this.addError(
             node,
-            `Function definition '${funcNode.name}' cannot have unnamed parameters. Only prototypes allow unnamed parameters.`,
+            `Function definition '${funcNode.name}' cannot have unnamed parameters.`,
             'error'
         );
-        return; // Skip this parameter
+        return;
     }
     
+    // ✅ Register the PARAMETER properly
     this.addSymbol(
-        param.name, 
-        param.varType, 
-        param.line || 0, 
-        true,
-        undefined,
-        true
+        param.name,        // ✅ Parameter name
+        param.varType,     // ✅ Parameter type
+        param.line || 0,   // ✅ Parameter line
+        true,              // Parameters are initialized by caller
+        undefined,         // No array dimensions for simple params
+        true,              // isDefined
+        'parameter'        // ✅ Correct kind
     );
 });
     
     // 4. Visit the body to analyze local variables and logic
-    funcNode.body.forEach((stmt: ASTNode) => this.visit(stmt));
+    if (funcNode.body && Array.isArray(funcNode.body)) {
+      funcNode.body.forEach((stmt: ASTNode) => this.visit(stmt));
+    }
     
     // 5. STRICT ENFORCEMENT: Check for return statement violations
     if (funcNode.name === 'main') {
@@ -260,40 +313,49 @@ funcNode.params.forEach((param: ParameterNode) => {
     const varNode = node as VariableDeclNode;
     const scopedName = `${this.currentScope}::${varNode.name}`;
     
+    // 1. REDECLARATION CHECK
     if (this.symbolTable[scopedName]) {
       this.addError(node, `Variable '${varNode.name}' already declared in this scope`);
     }
 
-    const initialized = varNode.value !== null && varNode.value !== undefined;
-    
-    let dimensions: number[] | undefined = undefined;
-    if (varNode.dimensions && varNode.dimensions.length > 0) {
-        dimensions = varNode.dimensions.map((dim: ASTNode) => {
-            const dimNode = dim as any; 
-            return (dimNode.type === 'Integer') ? dimNode.value : 0; 
-        });
+    let arrayDimensions: number[] | undefined = undefined;
+if (varNode.dimensions && varNode.dimensions.length > 0) {
+  arrayDimensions = varNode.dimensions.map((dimNode: ASTNode) => {
+    if ((dimNode as any).value !== undefined) {
+      return (dimNode as any).value;
     }
-
+    return 0;
+  });
+}
+    // 2. REGISTER THE SYMBOL FIRST
+    // We register it as 'variable' kind so it's not mislabeled as a function
+    const initialized = varNode.value !== null && varNode.value !== undefined;
     this.addSymbol(
       varNode.name, 
       varNode.varType, 
       varNode.line || 0, 
       initialized, 
-      dimensions,
-      true
+      arrayDimensions, // dimensions
+      true,      // isDefined
+      'variable' // kind
     );
 
-    // Track initialization as a write
+    // 3. EVALUATE THE VALUE (RHS)
+    // We visit the value BEFORE marking the write to prevent self-collision
     if (initialized) {
-      this.markWrite(varNode.name, varNode.line || 0);
       const valueType = this.visit(varNode.value);
-      if (valueType && !dimensions && !this.isTypeCompatible(varNode.varType, valueType, varNode.value)) {
+      
+      // 4. NOW MARK THE WRITE
+      // This initialization write is now "safe" from redundant checks
+      this.markWrite(varNode.name, varNode.line || 0);
+
+      if (valueType && !this.isTypeCompatible(varNode.varType, valueType, varNode.value)) {
         this.addError(node, `Type mismatch: cannot assign ${valueType} to ${varNode.varType}`);
       }
     }
     
     return varNode.varType;
-  }
+}
   
   /**
    * Visit Array Access
@@ -1045,27 +1107,31 @@ funcNode.params.forEach((param: ParameterNode) => {
    * Perform dead code analysis after visiting entire AST
    */
   private performDeadCodeAnalysis(): void {
+    // Standard library symbols that should be excluded from unused variable warnings
+    const stdLibSymbols = ['cout', 'cin', 'endl', 'string', 'cerr', 'clog'];
+    
     Object.keys(this.symbolTable).forEach(fullName => {
-      const symbol = this.symbolTable[fullName];
-      
-      // Skip main function
-      if (symbol.name === 'main') return;
-      
-      // Check for unused variables and functions
-      const usageCount = this.usageTracker.get(fullName) || 0;
-      if (usageCount === 0) {
-        const entityType = symbol.isDefined !== undefined 
-          ? (symbol.isDefined ? 'Function' : 'Function Prototype') 
-          : 'Variable';
+        const symbol = this.symbolTable[fullName];
         
-        this.addError(
-          { line: symbol.line } as any, 
-          `Unused ${entityType}: '${symbol.name}' is declared but never used`,
-          'warning'
-        );
-      }
+        // Skip main function
+        if (symbol.name === 'main') return;
+        
+        // Skip standard library symbols
+        if (stdLibSymbols.includes(symbol.name)) return;
+
+        const usageCount = this.usageTracker.get(fullName) || 0;
+        if (usageCount === 0) {
+            // USE THE NEW KIND PROPERTY FOR ACCURATE LOGGING
+            const entityType = symbol.kind.charAt(0).toUpperCase() + symbol.kind.slice(1);
+            
+            this.addError(
+                { line: symbol.line } as any, 
+                `Unused ${entityType}: '${symbol.name}' is declared but never used`,
+                'warning'
+            );
+        }
     });
-  }
+}
 
   /**
    * Get fully scoped name for a variable (searches up scope chain)
@@ -1104,7 +1170,8 @@ funcNode.params.forEach((param: ParameterNode) => {
     line: number, 
     initialized: boolean, 
     dimensions?: number[],
-    isDefined: boolean = true
+    isDefined: boolean = true,
+    kind: 'function' | 'variable' | 'parameter' = 'variable'
   ): void {
     // Keyword protection
     if (name === 'true' || name === 'false') {
@@ -1158,7 +1225,8 @@ funcNode.params.forEach((param: ParameterNode) => {
         scope: this.currentScope, 
         initialized,
         dimensions,
-        isDefined
+        isDefined,
+        kind
     };
   }
 

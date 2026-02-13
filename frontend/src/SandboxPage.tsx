@@ -287,6 +287,7 @@ int main() {
                   cfg={result.cfg} 
                   safetyChecks={result.safetyChecks} 
                   onNodeClick={handleNodeClick}
+                  isDrawerOpen={isTokenDrawerOpen}
                 /> 
              ) : (
                 <div className="placeholder-msg">Run analysis to generate Control Flow Graph</div>

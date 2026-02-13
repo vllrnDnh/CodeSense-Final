@@ -339,10 +339,23 @@ private visitCinStatement(node: any, current: ControlFlowNode): ControlFlowNode 
       const funcStart = this.createNode('start', `Func: ${node.name}`, '', node.line, node);
       this.connect(current, funcStart);
       let lastNode = funcStart;
-      node.body.forEach(stmt => {
-          lastNode = this.visit(stmt, lastNode, exit);
-      });
+      
+      // Handle function prototypes (body is null) vs full definitions (body is array)
+      if (node.body && Array.isArray(node.body)) {
+          node.body.forEach(stmt => {
+              lastNode = this.visit(stmt, lastNode, exit);
+          });
+      }
+      
       return lastNode;
+  }
+
+  private visitFunctionPrototype(node: any, current: ControlFlowNode, exit: ControlFlowNode): ControlFlowNode {
+      // Function prototypes are forward declarations - they don't have executable code
+      // Just create a simple node to document the prototype and move on
+      const protoNode = this.createNode('process', `Prototype: ${node.name}`, `${node.returnType} ${node.name}(...)`, node.line, node);
+      this.connect(current, protoNode);
+      return protoNode;
   }
 
   private visitReturnStatement(node: ReturnStatementNode, current: ControlFlowNode, exit: ControlFlowNode): ControlFlowNode {
