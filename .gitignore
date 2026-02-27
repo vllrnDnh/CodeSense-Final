@@ -20,3 +20,4 @@ npm-debug.log*
 # Editor/System
 .vscode/
 .DS_Store
+.env

@@ -442,6 +442,7 @@ export interface ExplorerProfile {
   id: string;
   playerName: string;
   secretCode: string; 
+  email?: string;
   totalXP: number;
   currentLevel: 1 | 2 | 3 | 4 ;
   characterType: 'squire' | 'knight' | 'duke' | 'lord';
@@ -483,6 +484,42 @@ export interface LeaderboardEntry {
   level: number;
   accuracy: number; 
   rank: number;
+}
+
+// ============================================================================
+// XP System Helpers
+// ============================================================================
+
+export const XP_LEVELS = {
+  1: { name: 'Squire',  minXP: 0,   maxXP: 99  },
+  2: { name: 'Knight',  minXP: 100, maxXP: 299 },
+  3: { name: 'Duke',    minXP: 300, maxXP: 599 },
+  4: { name: 'Lord',    minXP: 600, maxXP: Infinity },
+} as const
+
+export function getLevelName(level: 1 | 2 | 3 | 4): string {
+  return XP_LEVELS[level].name
+}
+
+export function getLevelProgress(totalXP: number): number {
+  if (totalXP >= 600) return 100
+  if (totalXP >= 300) return Math.floor(((totalXP - 300) / 300) * 100)
+  if (totalXP >= 100) return Math.floor(((totalXP - 100) / 200) * 100)
+  return Math.floor((totalXP / 100) * 100)
+}
+
+export function getXPToNextLevel(totalXP: number): number | null {
+  if (totalXP >= 600) return null
+  if (totalXP >= 300) return 600 - totalXP
+  if (totalXP >= 100) return 300 - totalXP
+  return 100 - totalXP
+}
+
+export function calculateLevel(totalXP: number): 1 | 2 | 3 | 4 {
+  if (totalXP >= 600) return 4
+  if (totalXP >= 300) return 3
+  if (totalXP >= 100) return 2
+  return 1
 }
 
 // ============================================================================

@@ -6,6 +6,7 @@ import { SignupPage } from './Signuppage';
 import { LoginPage } from './Loginpage'; 
 import { SandboxPage } from './SandboxPage';
 import { LandingPage } from './Landingpage';
+import { ProgressPage } from './Progresspage'
 
 // Real ProtectedRoute logic using your AuthContext
 const ProtectedRoute: React.FC<{ children: React.ReactElement }> = ({ children }) => {
@@ -37,6 +38,15 @@ export const App: React.FC = () => {
               </ProtectedRoute>
             } 
           />
+          <Route 
+  path="/progress" 
+  element={
+    <ProtectedRoute>
+      <ProgressPage />
+    </ProtectedRoute>
+  } 
+/>
+
           
           <Route 
             path="/sandbox" 
@@ -49,6 +59,7 @@ export const App: React.FC = () => {
 
           {/* SAFETY NET: Prohibit navigation to unfinished features */}
           {/* These redirect back to /home so you stay logged in! */}
+          <Route path="*" element={<Navigate to="/" replace />} />
           <Route path="/campaign" element={<Navigate to="/home" replace />} />
           <Route path="/profile" element={<Navigate to="/home" replace />} />
           <Route path="/settings" element={<Navigate to="/home" replace />} />

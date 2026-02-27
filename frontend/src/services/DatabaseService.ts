@@ -1,177 +1,338 @@
-import { db } from './firebase';
-import { 
-  collection, query, where, getDocs, doc, setDoc, updateDoc, getDoc, serverTimestamp, limit 
-} from "firebase/firestore";
-import type { ExplorerProfile } from '../types';
+// src/services/DatabaseService.ts
+import { supabase } from './supabase'
+import type { ExplorerProfile } from '../types'
 
 export const DatabaseService = {
-  
+
   // --- AUTHENTICATION ---
 
-  // LOGIN: Verifies credentials
+  // LOGIN: Looks up real email by playerName, then signs in with Supabase Auth
   async login(playerName: string, secretCode: string): Promise<ExplorerProfile> {
     try {
-      const usersRef = collection(db, "users");
-      const q = query(
-        usersRef, 
-        where("playerName", "==", playerName),
-        where("secretCode", "==", secretCode),
-        limit(1) // Optimization: Stop searching after finding one
-      );
-      const querySnapshot = await getDocs(q);
+      // 1. Look up the real email from public.users by playerName
+      const { data: userRow, error: lookupError } = await supabase
+        .from('users')
+        .select('email')
+        .eq('playername', playerName)
+        .maybeSingle()
 
-      if (querySnapshot.empty) {
-        throw new Error("INVALID_CREDENTIALS");
+      if (lookupError || !userRow?.email) {
+        throw new Error('INVALID_CREDENTIALS')
       }
-      
-      // Merge ID into the data just in case
-      const docSnap = querySnapshot.docs[0];
-      const data = docSnap.data();
-      
-      return { 
-        id: docSnap.id, 
-        ...data,
-        // Conversion for Firestore Timestamps to JS Dates
-        createdAt: data.createdAt?.toDate?.() || new Date(),
-        lastActive: data.lastActive?.toDate?.() || new Date(),
-      } as ExplorerProfile;
+
+      // 2. Sign in with their real email + secretCode
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: userRow.email,
+        password: secretCode
+      })
+
+      if (error || !data.user) {
+        throw new Error('INVALID_CREDENTIALS')
+      }
+
+      // 3. Fetch full profile
+      const { data: profile, error: profileError } = await supabase
+        .from('users')
+        .select('*')
+        .eq('id', data.user.id)
+        .single()
+
+      if (profileError || !profile) {
+        throw new Error('PROFILE_NOT_FOUND')
+      }
+
+      // 4. Update lastactive
+      await supabase
+        .from('users')
+        .update({ lastactive: new Date().toISOString() })
+        .eq('id', data.user.id)
+
+      return mapProfile(profile)
+
     } catch (error) {
-      console.error("Login Error:", error);
-      throw error;
+      console.error('Login Error:', error)
+      throw error
     }
   },
 
-  // SIGNUP: Creates new user (With Duplicate Check)
-  async signUp(playerName: string, secretCode: string, characterType: 'squire' | 'knight' | 'duke' | 'lord'): Promise<ExplorerProfile> {
+  // SIGNUP: Creates Supabase Auth user + public profile
+  async signUp(
+    playerName: string,
+    secretCode: string,
+    email: string,
+    characterType: 'squire' | 'knight' | 'duke' | 'lord'
+  ): Promise<ExplorerProfile> {
     try {
-      const usersRef = collection(db, "users");
-      
-      // 1. CRITICAL CHECK: Does this name exist?
-      const q = query(usersRef, where("playerName", "==", playerName));
-      const snapshot = await getDocs(q);
-      
-      if (!snapshot.empty) {
-        throw new Error("USERNAME_TAKEN");
+      // 1. Check if playerName is already taken
+      const { data: existing } = await supabase
+        .from('users')
+        .select('id')
+        .eq('playername', playerName)
+        .maybeSingle()
+
+      if (existing) {
+        throw new Error('USERNAME_TAKEN')
       }
 
-      // 2. Create User
-      const userId = `user_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
-      const newProfile: ExplorerProfile = {
-        id: userId,
+      // 2. Check if email is already taken
+      const { data: existingEmail } = await supabase
+        .from('users')
+        .select('id')
+        .eq('email', email)
+        .maybeSingle()
+
+      if (existingEmail) {
+        throw new Error('EMAIL_TAKEN')
+      }
+
+      // 3. Create Supabase Auth user with real email
+      const { data, error } = await supabase.auth.signUp({
+        email: email,
+        password: secretCode,
+        options: {
+          data: {
+            playername: playerName
+          }
+        }
+      })
+
+      if (error || !data.user) {
+        throw new Error(error?.message || 'SIGNUP_FAILED')
+      }
+
+      // 4. Wait for handle_new_user trigger to fire
+      await new Promise(resolve => setTimeout(resolve, 500))
+
+      // 5. Update charactertype, XP starts at 0
+      await supabase
+        .from('users')
+        .update({
+          charactertype: characterType,
+          totalxp: 0,
+          currentlevel: 1
+        })
+        .eq('id', data.user.id)
+
+      // 6. Fetch final profile
+      const { data: profile } = await supabase
+        .from('users')
+        .select('*')
+        .eq('id', data.user.id)
+        .single()
+
+      return {
+        id: data.user.id,
         playerName,
-        secretCode, // In a real app, hash this!
+        secretCode: '***',
         characterType,
-        totalXP: 50, // Start with a bonus!
-        currentLevel: 1,
-        createdAt: new Date(),
-        lastActive: new Date()
-      };
-
-      // We use setDoc to specify our custom userId
-      await setDoc(doc(db, "users", userId), {
-        ...newProfile,
-        createdAt: serverTimestamp(),
-        lastActive: serverTimestamp()
-      });
-      
-      return newProfile;
-    } catch (error) {
-      console.error("SignUp Error:", error);
-      throw error;
-    }
-  },
-
-  // GUEST LOGIN: Temporary session
-  async loginAsGuest(): Promise<ExplorerProfile> {
-    try {
-      const guestId = `guest_${Date.now()}`;
-      const guestProfile: ExplorerProfile = {
-        id: guestId,
-        playerName: `Explorer_${Math.floor(Math.random() * 999)}`,
-        secretCode: "GUEST-SESSION",
-        characterType: 'squire',
         totalXP: 0,
         currentLevel: 1,
-        createdAt: new Date(),
+        createdAt: new Date(profile?.createdat ?? Date.now()),
         lastActive: new Date()
-      };
-      
-      // We save guests too so they can save reports temporarily
-      await setDoc(doc(db, "users", guestId), {
-          ...guestProfile,
-          createdAt: serverTimestamp(),
-          lastActive: serverTimestamp()
-      });
-      return guestProfile;
+      } as ExplorerProfile
+
     } catch (error) {
-      console.error("Guest Login Error:", error);
-      throw error;
+      console.error('SignUp Error:', error)
+      throw error
     }
   },
 
-  // --- PROGRESS SYSTEM ---
+  // GUEST LOGIN: No Supabase auth — pure in-memory session
+  async loginAsGuest(): Promise<ExplorerProfile> {
+    return {
+      id: `guest_${Date.now()}`,
+      playerName: `Explorer_${Math.floor(Math.random() * 999)}`,
+      secretCode: 'GUEST-SESSION',
+      characterType: 'squire',
+      totalXP: 0,
+      currentLevel: 1,
+      createdAt: new Date(),
+      lastActive: new Date()
+    } as ExplorerProfile
+  },
 
-  // LEVEL UP LOGIC: Updates XP and recalculates Level
+  // LOGOUT: Signs out from Supabase Auth
+  async logout(): Promise<void> {
+    await supabase.auth.signOut()
+  },
+
+  // RESTORE SESSION: Called on app load to restore existing Supabase session
+  async restoreSession(): Promise<ExplorerProfile | null> {
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session?.user) return null
+
+      const { data: profile } = await supabase
+        .from('users')
+        .select('*')
+        .eq('id', session.user.id)
+        .single()
+
+      if (!profile) return null
+      return mapProfile(profile)
+
+    } catch (error) {
+      console.error('Restore Session Error:', error)
+      return null
+    }
+  },
+
+  // --- PROGRESS SYSTEM (campaign only, never sandbox) ---
+
   async addXP(userId: string, xpEarned: number): Promise<ExplorerProfile | null> {
     try {
-      const userRef = doc(db, "users", userId);
-      const userSnap = await getDoc(userRef);
+      const { data: current } = await supabase
+        .from('users')
+        .select('totalxp, currentlevel, playername, charactertype, createdat')
+        .eq('id', userId)
+        .single()
 
-      if (userSnap.exists()) {
-        const data = userSnap.data() as ExplorerProfile;
-        const newTotal = (data.totalXP || 0) + xpEarned;
-        
-        // Simple RPG Math synced with your GameEngine thresholds:
-        let newLevel: 1 | 2 | 3 | 4 = 1;
-        if (newTotal >= 600) newLevel = 4;      // Lord
-        else if (newTotal >= 300) newLevel = 3; // Duke
-        else if (newTotal >= 100) newLevel = 2; // Knight
+      if (!current) return null
 
-        const updates = {
-          totalXP: newTotal,
-          currentLevel: newLevel,
-          lastActive: serverTimestamp()
-        };
+      const newTotal = (current.totalxp || 0) + xpEarned
 
-        await updateDoc(userRef, updates);
-        
-        // Return updated profile with proper Date objects
-        const createdAtDate = data.createdAt instanceof Date 
-          ? data.createdAt 
-          : (data.createdAt as any)?.toDate?.() || new Date();
-        
-        return { 
-          ...data, 
-          totalXP: newTotal, 
-          currentLevel: newLevel, 
-          lastActive: new Date(),
-          createdAt: createdAtDate
-        } as ExplorerProfile;
-      }
-      return null;
+      let newLevel: 1 | 2 | 3 | 4 = 1
+      if (newTotal >= 600) newLevel = 4       // Lord
+      else if (newTotal >= 300) newLevel = 3  // Duke
+      else if (newTotal >= 100) newLevel = 2  // Knight
+
+      const { data: updated } = await supabase
+        .from('users')
+        .update({
+          totalxp: newTotal,
+          currentlevel: newLevel,
+          lastactive: new Date().toISOString()
+        })
+        .eq('id', userId)
+        .select()
+        .single()
+
+      if (!updated) return null
+
+      return mapProfile(updated)
+
     } catch (error) {
-      console.error("Update XP Error:", error);
-      throw error;
+      console.error('Update XP Error:', error)
+      throw error
     }
   },
 
-  // --- HISTORY & ANALYTICS ---
+  // --- SANDBOX (no XP, no rewards) ---
 
-  // Saves the "Pedagogy Report" to the cloud
-  async saveAnalysisReport(userId: string, code: string, narrative: string[]): Promise<void> {
+  async logSandboxRun(
+    userId: string,
+    sourceCode: string,
+    cognitiveComplexity: number,
+    symbolTable: object
+  ): Promise<void> {
     try {
-      // Auto-ID generation for reports
-      const reportRef = doc(collection(db, "reports")); 
-      await setDoc(reportRef, {
-        userId,
-        sourceCode: code,
-        narrative: narrative, 
-        timestamp: serverTimestamp(),
-        type: "SANDBOX_RUN"
-      });
-    } catch (e) {
-      console.error("Failed to save report", e);
-      // Don't crash the app if analytics fail
+      await supabase.rpc('log_sandbox_run', {
+        p_userid: userId,
+        p_sourcecode: sourceCode,
+        p_cognitive_complexity: cognitiveComplexity,
+        p_symbol_table: symbolTable
+      })
+    } catch (error) {
+      console.error('Sandbox log failed (non-critical):', error)
+    }
+  },
+
+  // --- CAMPAIGN ---
+
+  async completeQuest(
+    userId: string,
+    questId: string,
+    xpEarned: number,
+    complexityScore: number,
+    symbolTable: object,
+    sourceCode: string
+  ): Promise<void> {
+    try {
+      await supabase.rpc('complete_campaign_quest', {
+        p_userid: userId,
+        p_questid: questId,
+        p_xp_earned: xpEarned,
+        p_complexity_score: complexityScore,
+        p_symbol_table: symbolTable,
+        p_sourcecode: sourceCode
+      })
+    } catch (error) {
+      console.error('Complete Quest Error:', error)
+      throw error
+    }
+  },
+
+  async getQuests(phase: 'beginner' | 'intermediate' | 'advanced') {
+    const { data, error } = await supabase
+      .from('quests')
+      .select('*')
+      .eq('mode', 'campaign')
+      .eq('phase', phase)
+      .eq('isactive', true)
+      .order('sortorder', { ascending: true })
+
+    if (error) throw error
+    return data
+  },
+
+  async getMissionProgress(userId: string) {
+    const { data, error } = await supabase
+      .from('mission_progress')
+      .select('*, quests(*)')
+      .eq('userid', userId)
+
+    if (error) throw error
+    return data
+  },
+
+  async getLeaderboard(limit = 10) {
+    const { data, error } = await supabase
+      .from('leaderboard')
+      .select('*')
+      .order('rank', { ascending: true })
+      .limit(limit)
+
+    if (error) throw error
+    return data
+  },
+
+  // --- REPORTS ---
+
+  async saveAnalysisReport(
+    userId: string,
+    code: string,
+    narrative: string[],
+    modeContext: 'sandbox' | 'campaign' = 'sandbox',
+    cognitiveComplexity?: number,
+    symbolTable?: object
+  ): Promise<void> {
+    try {
+      await supabase.from('reports').insert({
+        userid: userId,
+        type: modeContext === 'sandbox' ? 'summary' : 'progress',
+        sourcecode: code,
+        narrative,
+        mode_context: modeContext,
+        cognitive_complexity: cognitiveComplexity ?? null,
+        symbol_table: symbolTable ?? null
+      })
+    } catch (error) {
+      console.error('Failed to save report (non-critical):', error)
     }
   }
-};
+}
+
+// --- HELPER ---
+// Converts raw Supabase row to ExplorerProfile type
+function mapProfile(profile: any): ExplorerProfile {
+  return {
+    id: profile.id,
+    playerName: profile.playername,
+    secretCode: '***',
+    characterType: profile.charactertype,
+    totalXP: profile.totalxp,
+    currentLevel: profile.currentlevel,
+    createdAt: new Date(profile.createdat),
+    lastActive: new Date(profile.lastactive)
+  } as ExplorerProfile
+}

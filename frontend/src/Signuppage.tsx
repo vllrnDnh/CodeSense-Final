@@ -11,6 +11,7 @@ export const SignupPage: React.FC = () => {
   const [formData, setFormData] = useState({
     username: '',
     password: '',
+    email: '',
     confirmPassword: '',
     characterType: 'squire' as ExplorerProfile['characterType']
   });
@@ -41,13 +42,18 @@ export const SignupPage: React.FC = () => {
 
     if (!formData.password) {
       newErrors.password = 'Secret Code is required';
-    } else if (formData.password.length < 4) {
-      newErrors.password = 'Code must be at least 4 characters';
+    } else if (formData.password.length < 8) {
+      newErrors.password = 'Code must be at least 8 characters';
     }
 
     if (formData.password !== formData.confirmPassword) {
       newErrors.confirmPassword = 'Codes do not match';
     }
+    if (!formData.email.trim()) {
+  newErrors.email = 'Email is required'
+} else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email)) {
+  newErrors.email = 'Please enter a valid email address'
+}
 
     if (!agreedToPrivacy) {
       newErrors.privacy = 'You must agree to the Data Privacy Policy';
@@ -63,7 +69,7 @@ export const SignupPage: React.FC = () => {
 
     setIsLoading(true);
     try {
-      await signup(formData.username, formData.password, formData.characterType);
+      await signup(formData.username, formData.password, formData.email, formData.characterType);
       navigate('/home');
     } catch (error) {
       setErrors({ submit: 'Signup failed. This Player Name may already be taken.' });
@@ -160,6 +166,18 @@ export const SignupPage: React.FC = () => {
               ))}
             </div>
           </div>
+          <div style={{ marginBottom: '20px' }}>
+  <label style={labelStyle}>Email Address</label>
+  <input
+    type="email"
+    name="email"
+    value={formData.email}
+    onChange={handleChange}
+    placeholder="e.g. yourname@gmail.com"
+    style={inputStyle(!!errors.email)}
+  />
+  {errors.email && <p style={errorTextStyle}>{errors.email}</p>}
+</div>
 
           {/* Secret Code (Password) */}
           <div style={{ marginBottom: '20px' }}>

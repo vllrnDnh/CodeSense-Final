@@ -1,258 +1,485 @@
-/* src/layout.css */
+/* ============================================================
+   CodeSense Sandbox — layout.css
+   Design direction: "Technical Blueprint" — crisp, readable,
+   high-contrast dark IDE aesthetic with clear zone hierarchy.
+   Font: IBM Plex Mono for code feel, IBM Plex Sans for UI.
+   ============================================================ */
+
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap');
+
+/* ── Design tokens ──────────────────────────────────────── */
 :root {
-  --wireframe-yellow: #ffc107;
-  --bg-darker: #0d1117;
-  --bg-panel: #161b22;
-  --border-muted: #30363d;
-  --cyan-accent: #58a6ff;
-  --orange-accent: #ffa726;
-  --error-red: #f85149;
-  --success-green: #238636;
+  --bg-void:      #080b10;   /* deepest background */
+  --bg-base:      #0d1117;   /* panel base */
+  --bg-elevated:  #161b22;   /* raised panels */
+  --bg-overlay:   #1c2128;   /* hover states, inputs */
+
+  --border-faint:  #1e242c;
+  --border-muted:  #2d333b;
+  --border-strong: #444c56;
+
+  --text-primary:   #e6edf3;
+  --text-secondary: #8b949e;
+  --text-muted:     #484f58;
+
+  --yellow:  #e3b341;  /* analyze accent */
+  --green:   #3fb950;  /* success / safe */
+  --blue:    #58a6ff;  /* info / links */
+  --orange:  #f0883e;  /* warnings */
+  --red:     #f85149;  /* errors / danger */
+  --purple:  #a371f7;  /* build mode accent */
+  --cyan:    #39d5d3;  /* CFG highlight */
+
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+
+  --header-h: 58px;
+  --panel-gap: 14px;
 }
 
-/* GLOBAL RESET & SCROLL FIX */
+/* ── Reset ──────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
 html, body, #root {
-  margin: 0;
-  padding: 0;
-  min-height: 100%;
-  background-color: var(--bg-darker);
-  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
-  color: white;
-  overflow-y: auto; /* Restored scroll wheel */
-  overflow-x: hidden;
+  height: 100%;
+  background: var(--bg-void);
+  font-family: 'IBM Plex Sans', 'Segoe UI', system-ui, sans-serif;
+  color: var(--text-primary);
+  overflow: hidden; /* the inner columns scroll, not the page */
+  -webkit-font-smoothing: antialiased;
 }
 
+/* ── App shell ──────────────────────────────────────────── */
 .app-container {
   display: flex;
   flex-direction: column;
-  min-height: 100vh;
+  height: 100vh;
+  overflow: hidden;
 }
 
-/* HEADER HUD */
+/* ── Header ─────────────────────────────────────────────── */
 .app-header {
-  height: 60px;
-  background-color: var(--bg-panel);
-  border-bottom: 2px solid var(--wireframe-yellow);
+  height: var(--header-h);
+  min-height: var(--header-h);
+  background: var(--bg-elevated);
+  border-bottom: 1px solid var(--border-muted);
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 30px;
+  padding: 0 20px;
+  flex-shrink: 0;
+  position: relative;
+  z-index: 100;
+  /* Subtle bottom glow to separate from content */
+  box-shadow: 0 1px 0 var(--border-faint), 0 4px 20px rgba(0,0,0,0.4);
+}
+
+.header-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-decoration: none;
   flex-shrink: 0;
 }
 
+.brand-icon { font-size: 20px; }
+
 .brand-text {
+  font-size: 15px;
   font-weight: 700;
-  font-size: 1.25rem;
-  letter-spacing: -0.5px;
+  color: var(--text-primary);
+  letter-spacing: -0.3px;
+  font-family: 'IBM Plex Mono', monospace;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
 }
 
 .exit-btn {
-  background: rgba(248, 81, 73, 0.1);
-  border: 1px solid var(--error-red);
-  color: var(--error-red);
-  padding: 6px 14px;
-  border-radius: 6px;
+  background: transparent;
+  border: 1px solid var(--border-strong);
+  color: var(--text-secondary);
+  padding: 7px 14px;
+  border-radius: var(--radius-sm);
   font-weight: 600;
-  font-size: 0.8rem;
+  font-size: 11px;
+  letter-spacing: 0.5px;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: all 0.15s;
+  font-family: 'IBM Plex Mono', monospace;
 }
 
 .exit-btn:hover {
-  background: var(--error-red);
-  color: white;
+  border-color: var(--red);
+  color: var(--red);
+  background: rgba(248, 81, 73, 0.08);
 }
 
-/* DYNAMIC LAYOUT GRID */
+/* ── Main layout grid ───────────────────────────────────── */
 .main-layout {
   flex: 1;
   display: grid;
-  /* Responsive: Left col takes 1 part, Right takes 2 parts */
-  grid-template-columns: minmax(380px, 1fr) 2fr;
-  gap: 16px;
-  padding: 16px;
-  max-width: 1600px;
-  margin: 0 auto;
-  width: 100%;
-  box-sizing: border-box;
+  grid-template-columns: minmax(480px, 38%) 1fr;
+  gap: var(--panel-gap);
+  padding: var(--panel-gap);
+  overflow: hidden;
+  min-height: 0;
 }
 
 .left-column {
   display: flex;
   flex-direction: column;
-  gap: 16px;
-}
-
-.right-column {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  min-height: 600px; /* Ensure the right side stretches */
-}
-
-/* SECTION CONTAINERS */
-.section-title {
-  background: rgba(48, 54, 61, 0.3);
-  color: #8b949e;
-  padding: 8px 16px;
-  font-size: 0.7rem;
-  font-weight: 800;
-  text-transform: uppercase;
-  letter-spacing: 1px;
-  border-bottom: 1px solid var(--border-muted);
-}
-
-.editor-section, .tabs-section {
-  background: var(--bg-panel);
-  border: 1px solid var(--border-muted);
-  border-radius: 12px;
-  display: flex;
-  flex-direction: column;
+  gap: var(--panel-gap);
+  min-height: 0;
   overflow: hidden;
 }
 
-.editor-section { flex: 1.5; }
-.tabs-section { flex: 1; }
-
-.action-bar {
-  padding: 12px;
-  background: rgba(0,0,0,0.2);
+.right-column {
   display: flex;
-  justify-content: center;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* ── Panels (shared card style) ─────────────────────────── */
+.editor-section,
+.tabs-section {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-muted);
+  border-radius: var(--radius-lg);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-height: 0;
+}
+
+.editor-section { flex: 2.2; min-height: 0; }
+.tabs-section   { flex: 1; min-height: 240px; }
+
+/* ── Section title bar ──────────────────────────────────── */
+.section-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  color: var(--text-muted);
+  background: var(--bg-base);
+  border-bottom: 1px solid var(--border-faint);
+  font-family: 'IBM Plex Mono', monospace;
+  flex-shrink: 0;
+}
+
+/* Coloured left accent stripe on section titles */
+.section-title::before {
+  content: '';
+  display: inline-block;
+  width: 3px;
+  height: 14px;
+  border-radius: 2px;
+  background: var(--yellow);
+  flex-shrink: 0;
+}
+
+/* Override accent color in build mode via parent class */
+.build-title::before { background: var(--purple) !important; }
+.cfg-title::before   { background: var(--cyan) !important; }
+
+/* Right-column title bar */
+.right-column .section-title {
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-muted);
+  border-bottom: 1px solid var(--border-faint);
+}
+
+/* ── Editor area ────────────────────────────────────────── */
+.editor-container {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  background: #12181f;
+}
+
+/* ── Analyze button bar ─────────────────────────────────── */
+.action-bar {
+  padding: 10px 14px;
+  background: var(--bg-base);
+  border-top: 1px solid var(--border-faint);
+  display: flex;
+  justify-content: stretch;
+  flex-shrink: 0;
 }
 
 .analyze-btn {
-  width: 80%;
-  padding: 12px;
-  border-radius: 8px;
+  flex: 1;
+  padding: 10px 20px;
+  border-radius: var(--radius-md);
   border: none;
   font-weight: 700;
+  font-size: 12px;
+  letter-spacing: 1.5px;
   cursor: pointer;
-  background: var(--wireframe-yellow);
-  color: black;
-  transition: transform 0.1s;
+  background: var(--yellow);
+  color: #080b10;
+  font-family: 'IBM Plex Mono', monospace;
+  transition: all 0.15s;
 }
 
-.analyze-btn:active { transform: scale(0.98); }
+.analyze-btn:hover:not(:disabled) {
+  background: #f0c040;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 16px rgba(227,179,65,0.35);
+}
 
-/* TAB SYSTEM */
+.analyze-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* ── Tab system ─────────────────────────────────────────── */
 .tab-headers {
   display: flex;
-  background: #010409;
-  border-bottom: 1px solid var(--border-muted);
+  background: var(--bg-base);
+  border-bottom: 1px solid var(--border-faint);
+  overflow-x: auto;
+  flex-shrink: 0;
 }
+
+.tab-headers::-webkit-scrollbar { display: none; }
 
 .tab-link {
   background: none;
   border: none;
-  color: #8b949e;
-  padding: 10px 16px;
-  font-size: 0.75rem;
+  border-bottom: 2px solid transparent;
+  color: var(--text-muted);
+  padding: 9px 13px;
+  font-size: 11px;
   font-weight: 600;
+  font-family: 'IBM Plex Sans', sans-serif;
   cursor: pointer;
-  transition: 0.2s;
+  transition: all 0.15s;
+  white-space: nowrap;
+  letter-spacing: 0.2px;
 }
 
+.tab-link:hover { color: var(--text-secondary); }
+
 .tab-link.active {
-  color: var(--wireframe-yellow);
-  background: var(--bg-panel);
-  box-shadow: inset 0 -2px 0 var(--wireframe-yellow);
+  color: var(--yellow);
+  border-bottom-color: var(--yellow);
+  background: rgba(227,179,65,0.05);
 }
 
 .tab-content {
   flex: 1;
   position: relative;
-  min-height: 200px;
+  min-height: 0;
 }
 
 .tab-view-scroll {
   position: absolute;
-  top: 0; left: 0; right: 0; bottom: 0;
+  inset: 0;
   overflow-y: auto;
-  padding: 20px;
+  padding: 14px;
 }
 
-/* DATA TABLES (SYMBOLS & MATH) */
-.symbol-table, .math-table {
-  width: 100%;
-  border-collapse: collapse;
-}
-
-.symbol-table th, .math-table th {
-  text-align: left;
-  color: var(--cyan-accent);
-  font-size: 0.75rem;
-  text-transform: uppercase;
-  padding-bottom: 12px;
-  border-bottom: 1px solid var(--border-muted);
-}
-
-.symbol-table td, .math-table td {
-  padding: 12px 0;
-  font-size: 0.85rem;
-  border-bottom: 1px solid #21262d;
-  font-family: 'JetBrains Mono', monospace;
-}
-
-.symbol-type, .math-value { color: var(--orange-accent); }
-.symbol-line { color: var(--cyan-accent); text-align: right; }
-
-/* ERROR CARDS */
-.math-error-card {
-  background: rgba(248, 81, 73, 0.1);
-  border-left: 4px solid var(--error-red);
-  padding: 16px;
-  border-radius: 6px;
-  margin-bottom: 12px;
-}
-
-/* CUSTOM SCROLLBAR */
-::-webkit-scrollbar {
-  width: 10px;
-}
-::-webkit-scrollbar-track {
-  background: var(--bg-darker);
-}
-::-webkit-scrollbar-thumb {
-  background: #30363d;
-  border-radius: 5px;
-  border: 2px solid var(--bg-darker);
-}
-::-webkit-scrollbar-thumb:hover {
-  background: #484f58;
-}
-
-/* LOG ENTRIES */
-.log-entry {
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 0.8rem;
-  margin-bottom: 8px;
-  line-height: 1.4;
-}
+/* ── Visualizer container ───────────────────────────────── */
 .visualizer-container {
   flex: 1;
+  min-height: 0;
   position: relative;
-  width: 100%;
+  background: var(--bg-base);
+  border: 1px solid var(--border-muted);
+  border-top: none;
+  border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+  overflow: hidden;
+}
+
+/* ── Placeholder messages ───────────────────────────────── */
+.placeholder-text,
+.placeholder-msg {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
   height: 100%;
-  min-height: 500px; /* Force the area to stay open */
-  background: #0d1117;
-  overflow: hidden;
-  border-radius: 0 0 12px 12px;
+  min-height: 120px;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.8;
+  text-align: center;
+  padding: 24px;
+  font-family: 'IBM Plex Mono', monospace;
 }
 
-.editor-container {
-  flex: 1;
+.placeholder-msg::before {
+  content: '○';
+  display: block;
+  font-size: 28px;
+  margin-bottom: 12px;
+  opacity: 0.2;
+}
+
+/* ── Symbol table ───────────────────────────────────────── */
+.symbol-table,
+.math-table {
   width: 100%;
-  height: 100%; /* Monaco requires the parent to have a height */
-  overflow: hidden;
-  background-color: #1e1e1e; /* Match Monaco default dark */
+  border-collapse: collapse;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 12px;
 }
 
+.symbol-table th,
+.math-table th {
+  text-align: left;
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  padding: 0 0 10px 0;
+  border-bottom: 1px solid var(--border-faint);
+}
+
+.symbol-table td,
+.math-table td {
+  padding: 9px 0;
+  border-bottom: 1px solid var(--border-faint);
+  vertical-align: middle;
+}
+
+.symbol-table tr:last-child td,
+.math-table tr:last-child td { border-bottom: none; }
+
+.symbol-type { color: var(--blue);   padding-right: 16px; }
+.symbol-name { color: var(--text-primary); }
+.symbol-line { color: var(--text-muted); text-align: right; }
+.math-expr   { color: var(--text-primary); }
+.math-value  { color: var(--orange); text-align: right; }
+
+/* ── Error cards ────────────────────────────────────────── */
+.math-error-container { display: flex; flex-direction: column; gap: 10px; }
+
+.math-error-title {
+  font-size: 12px;
+  color: var(--red);
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  margin-bottom: 4px;
+  font-family: 'IBM Plex Mono', monospace;
+}
+
+.math-error-card {
+  background: rgba(248, 81, 73, 0.07);
+  border: 1px solid rgba(248, 81, 73, 0.25);
+  border-left: 3px solid var(--red);
+  padding: 12px 14px;
+  border-radius: var(--radius-sm);
+}
+
+.math-error-loc {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 11px;
+  color: var(--red);
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+
+.math-error-msg {
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+/* ── AST viewer ─────────────────────────────────────────── */
+.ast-viewer {
+  background: var(--bg-base);
+  border: 1px solid var(--border-faint);
+  border-radius: var(--radius-sm);
+  overflow: auto;
+}
+
+.ast-json-code {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 11px;
+  color: var(--text-secondary);
+  line-height: 1.7;
+  padding: 14px;
+  white-space: pre;
+}
+
+/* ── Terminal / Logs ────────────────────────────────────── */
+.terminal-container { display: flex; flex-direction: column; gap: 10px; }
+
+.terminal-header {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--orange);
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+
+.terminal-output {
+  background: #010409;
+  border: 1px solid var(--border-faint);
+  border-radius: var(--radius-sm);
+  padding: 14px;
+}
+
+.log-entry {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 11px;
+  line-height: 1.7;
+  margin-bottom: 4px;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+/* ── Token integration ──────────────────────────────────── */
+.token-integration { display: flex; flex-direction: column; gap: 14px; }
+
+.token-action-footer { display: flex; justify-content: flex-end; }
+
+.view-all-tokens-btn {
+  padding: 8px 16px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-strong);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+  font-family: 'IBM Plex Sans', sans-serif;
+}
+
+.view-all-tokens-btn:hover {
+  border-color: var(--blue);
+  color: var(--blue);
+  background: rgba(88,166,255,0.06);
+}
+
+/* ── Custom scrollbar ───────────────────────────────────── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+
+/* ── Monaco editor selection highlight ─────────────────── */
 .monaco-editor .selected-text {
-  background-color: rgba(100, 181, 246, 0.4) !important; /* Bright blue */
-}
-
-/* Optional: Highlight the entire line in the gutter too */
-.monaco-editor .focused .selected-text {
-  background-color: rgba(100, 181, 246, 0.25) !important;
+  background-color: rgba(88, 166, 255, 0.3) !important;
 }

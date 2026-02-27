@@ -1,178 +1,246 @@
-import { useState, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import './layout.css'; 
+import './layout.css';
 import { CodeEditor } from './components/Editor/CodeEditor';
 import { analyzeCode } from './services/api';
 import { FlowGraph } from './components/Visualizer/FlowGraph';
 import { TokenDrawer } from './components/Visualizer/TokenDrawer';
-import { TokenChart } from './components/Visualizer/TokenChart'; 
+import { TokenChart } from './components/Visualizer/TokenChart';
 import { useAuth } from './components/AuthScreen';
 import { DataIsolationService } from './Dataisolationservice';
-
+import { DatabaseService } from './services/DatabaseService';
+import { supabase } from './services/supabase';
+import { getLevelName, getLevelProgress, getXPToNextLevel } from './types';
 import type { AnalysisResult, SymbolInfo } from './types';
-
-// ─── Mode type ────────────────────────────────────────────────────────────────
 
 type AppMode = 'analyze' | 'build';
 
-// ─── Mode Toggle ──────────────────────────────────────────────────────────────
+interface LiveStats {
+  totalXP: number;
+  currentLevel: 1 | 2 | 3 | 4;
+  sandboxRuns: number;
+  rankName: string;
+}
 
+// ─── Rank config ──────────────────────────────────────────────────────────────
+const RANK_CONFIG = {
+  1: { color: '#8b949e', icon: '🛡️', label: 'Squire'  },
+  2: { color: '#58a6ff', icon: '⚔️', label: 'Knight'  },
+  3: { color: '#e3b341', icon: '👑', label: 'Duke'    },
+  4: { color: '#a371f7', icon: '🌟', label: 'Lord'    },
+} as const;
+
+// ─── Player HUD ───────────────────────────────────────────────────────────────
+const PlayerHUD: React.FC<{
+  user: { id: string; playerName: string } | null;
+  isGuest: boolean;
+  liveStats: LiveStats | null;
+  xpFlash: number;
+}> = ({ user, isGuest, liveStats, xpFlash }) => {
+  if (isGuest) return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px', background: 'rgba(139,148,158,0.06)', border: '1px solid #2d333b', borderRadius: '8px' }}>
+      <span style={{ fontSize: '15px' }}>👤</span>
+      <div>
+        <div style={{ color: '#8b949e', fontSize: '11px', fontWeight: '700', letterSpacing: '0.5px', fontFamily: 'IBM Plex Mono, monospace' }}>GUEST</div>
+        <div style={{ color: '#484f58', fontSize: '10px' }}>Sign up to save progress</div>
+      </div>
+    </div>
+  );
+
+  if (!user || !liveStats) return (
+    <div style={{ width: '180px', height: '36px', background: '#1c2128', border: '1px solid #2d333b', borderRadius: '8px', display: 'flex', alignItems: 'center', padding: '0 12px' }}>
+      <div style={{ width: '100%', height: '6px', background: '#2d333b', borderRadius: '3px', animation: 'shimmer 1.2s ease-in-out infinite' }} />
+    </div>
+  );
+
+  const rank = RANK_CONFIG[liveStats.currentLevel];
+  const progress = getLevelProgress(liveStats.totalXP);
+  const xpToNext = getXPToNextLevel(liveStats.totalXP);
+
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: '10px',
+      padding: '6px 12px 6px 8px',
+      background: 'rgba(13,17,23,0.8)',
+      border: `1px solid ${rank.color}33`,
+      borderRadius: '10px',
+      position: 'relative',
+    }}>
+      {/* Rank icon */}
+      <div style={{
+        width: '34px', height: '34px', borderRadius: '8px', flexShrink: 0,
+        background: `${rank.color}18`, border: `1px solid ${rank.color}44`,
+        display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '16px',
+      }}>
+        {rank.icon}
+      </div>
+
+      {/* Name + rank + XP bar */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', minWidth: '110px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <span style={{ color: '#e6edf3', fontSize: '12px', fontWeight: '700', maxWidth: '80px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {user.playerName}
+          </span>
+          <span style={{ color: rank.color, fontSize: '9px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.8px', fontFamily: 'IBM Plex Mono, monospace' }}>
+            {rank.label}
+          </span>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <div style={{ flex: 1, height: '3px', background: 'rgba(255,255,255,0.07)', borderRadius: '2px', overflow: 'hidden' }}>
+            <div style={{ width: `${progress}%`, height: '100%', background: rank.color, borderRadius: '2px', transition: 'width 0.6s ease' }} />
+          </div>
+          <span style={{ color: '#484f58', fontSize: '9px', whiteSpace: 'nowrap', fontFamily: 'IBM Plex Mono, monospace' }}>
+            {xpToNext === null ? 'MAX' : `${liveStats.totalXP} XP`}
+          </span>
+        </div>
+      </div>
+
+      {/* Divider */}
+      <div style={{ width: '1px', height: '28px', background: '#2d333b', flexShrink: 0 }} />
+
+      {/* Runs */}
+      <div style={{ textAlign: 'center', flexShrink: 0 }}>
+        <div style={{ color: '#3fb950', fontSize: '16px', fontWeight: '700', lineHeight: 1, fontFamily: 'IBM Plex Mono, monospace' }}>
+          {liveStats.sandboxRuns}
+        </div>
+        <div style={{ color: '#484f58', fontSize: '9px', letterSpacing: '0.5px', textTransform: 'uppercase', fontFamily: 'IBM Plex Mono, monospace' }}>RUNS</div>
+      </div>
+
+      {xpFlash > 0 && (
+        <div style={{ position: 'absolute', top: '-30px', right: '6px', color: '#3fb950', fontSize: '12px', fontWeight: '700', animation: 'xpFloat 1.8s ease-out forwards', pointerEvents: 'none', whiteSpace: 'nowrap', fontFamily: 'IBM Plex Mono, monospace' }}>
+          🔬 run logged
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ─── Mode Toggle ──────────────────────────────────────────────────────────────
 const ModeToggle: React.FC<{ mode: AppMode; onChange: (m: AppMode) => void }> = ({ mode, onChange }) => (
   <div style={{
-    display: 'flex',
-    gap: 0,
-    background: 'rgba(13,17,23,0.95)',
-    border: '1px solid #30363d',
-    borderRadius: '10px',
-    padding: '3px',
-    boxShadow: '0 2px 10px rgba(0,0,0,0.4)',
+    display: 'flex', gap: 0,
+    background: '#0d1117',
+    border: '1px solid #2d333b',
+    borderRadius: '10px', padding: '3px',
   }}>
     {([
-      { id: 'analyze' as AppMode, label: '🔍 Analyze Code', activeColor: '#4caf50' },
-      { id: 'build'   as AppMode, label: '🎨 Build Flowchart', activeColor: '#a855f7' },
-    ]).map(({ id, label, activeColor }) => (
-      <button
-        key={id}
-        onClick={() => onChange(id)}
-        style={{
-          padding: '7px 16px',
-          borderRadius: '8px',
-          border: 'none',
-          fontSize: '12px',
-          fontWeight: '700',
-          cursor: 'pointer',
-          letterSpacing: '0.3px',
-          transition: 'all 0.2s',
-          background: mode === id
-            ? `linear-gradient(135deg,${activeColor}cc,${activeColor}88)`
-            : 'transparent',
-          color: mode === id ? 'white' : '#8b949e',
-          boxShadow: mode === id ? `0 2px 10px ${activeColor}44` : 'none',
-        }}
-      >
+      { id: 'analyze' as AppMode, label: '🔍 Analyze Code',    color: '#3fb950' },
+      { id: 'build'   as AppMode, label: '🎨 Build Flowchart', color: '#a371f7' },
+    ]).map(({ id, label, color }) => (
+      <button key={id} onClick={() => onChange(id)} style={{
+        padding: '7px 18px', borderRadius: '8px', border: 'none',
+        fontSize: '12px', fontWeight: '700', cursor: 'pointer',
+        letterSpacing: '0.3px', transition: 'all 0.2s',
+        fontFamily: 'IBM Plex Sans, sans-serif',
+        background: mode === id ? `${color}22` : 'transparent',
+        color: mode === id ? color : '#484f58',
+        boxShadow: mode === id ? `inset 0 0 0 1px ${color}55` : 'none',
+      }}>
         {label}
       </button>
     ))}
   </div>
 );
 
-// ─── Build Flowchart Panel ────────────────────────────────────────────────────
-// Shown on the LEFT side in build mode. Displays the generated code and lets
-// the user copy or open it in the editor — completely independent of the
-// backend analyzeCode() call.
+// ─── Safety Banner — shown at top of CFG panel when issues exist ──────────────
+const SafetyBanner: React.FC<{ total: number; unsafe: number }> = ({ total, unsafe }) => {
+  if (total === 0) return null;
+  const allSafe = unsafe === 0;
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: '12px',
+      padding: '8px 16px',
+      background: allSafe ? 'rgba(63,185,80,0.07)' : 'rgba(248,81,73,0.07)',
+      borderBottom: `1px solid ${allSafe ? 'rgba(63,185,80,0.2)' : 'rgba(248,81,73,0.2)'}`,
+      flexShrink: 0,
+    }}>
+      {/* Exploration */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '7px' }}>
+        <span style={{ fontSize: '11px' }}>📍</span>
+        <span style={{ color: '#8b949e', fontSize: '11px', fontFamily: 'IBM Plex Mono, monospace' }}>Nodes</span>
+        <span style={{ color: '#e6edf3', fontSize: '13px', fontWeight: '700', fontFamily: 'IBM Plex Mono, monospace' }}>{total}</span>
+      </div>
 
+      <div style={{ width: '1px', height: '16px', background: '#2d333b' }} />
+
+      {/* Safety */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '7px' }}>
+        <span style={{ fontSize: '11px' }}>{allSafe ? '✅' : '⚠️'}</span>
+        <span style={{ color: '#8b949e', fontSize: '11px', fontFamily: 'IBM Plex Mono, monospace' }}>Safety</span>
+        <span style={{
+          color: allSafe ? '#3fb950' : '#f85149',
+          fontSize: '13px', fontWeight: '700',
+          fontFamily: 'IBM Plex Mono, monospace',
+        }}>
+          {allSafe ? 'All clear' : `${unsafe} issue${unsafe > 1 ? 's' : ''}`}
+        </span>
+      </div>
+
+      {/* Progress bar */}
+      <div style={{ flex: 1, height: '4px', background: 'rgba(255,255,255,0.05)', borderRadius: '2px', overflow: 'hidden', maxWidth: '160px', marginLeft: 'auto' }}>
+        <div style={{
+          width: `${((total - unsafe) / total) * 100}%`,
+          height: '100%',
+          background: allSafe ? '#3fb950' : '#f0883e',
+          borderRadius: '2px',
+          transition: 'width 0.5s ease',
+        }} />
+      </div>
+    </div>
+  );
+};
+
+// ─── Generated Code Viewer ────────────────────────────────────────────────────
 const GeneratedCodeViewer: React.FC<{
   code: string;
   onLoadInEditor: (code: string) => void;
 }> = ({ code, onLoadInEditor }) => {
   const [copied, setCopied] = useState(false);
 
-  const handleCopy = () => {
-    navigator.clipboard.writeText(code).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1800);
-    });
-  };
-
-  if (!code) {
-    return (
-      <div className="placeholder-text" style={{ padding: '20px', textAlign: 'center', color: '#484f58', lineHeight: '1.8' }}>
-        <div style={{ fontSize: '32px', marginBottom: '10px', opacity: 0.3 }}>⚡</div>
-        <strong style={{ display: 'block', color: '#30363d', marginBottom: '6px' }}>No code generated yet</strong>
-        Build a flowchart on the right, then click<br />
-        <strong style={{ color: '#a855f7' }}>⚡ GENERATE C++ CODE</strong> in the canvas panel.
+  if (!code) return (
+    <div className="placeholder-text">
+      <div style={{ fontSize: '28px', marginBottom: '12px', opacity: 0.15 }}>⚡</div>
+      <div style={{ color: '#484f58', marginBottom: '6px' }}>No code generated yet</div>
+      <div style={{ color: '#2d333b', fontSize: '12px' }}>
+        Build a flowchart → click <span style={{ color: '#a371f7' }}>⚡ GENERATE C++</span>
       </div>
-    );
-  }
+    </div>
+  );
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', height: '100%' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-        <div style={{ fontSize: '11px', color: '#a855f7', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-          ⚡ Generated C++ Code
-        </div>
-        <div style={{ fontSize: '10px', color: '#484f58', marginLeft: 'auto' }}>from flowchart</div>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: '10px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', padding: '0 2px' }}>
+        <span style={{ fontSize: '11px', color: '#a371f7', fontWeight: '700', letterSpacing: '0.5px', textTransform: 'uppercase', fontFamily: 'IBM Plex Mono, monospace' }}>⚡ Generated C++</span>
+        <span style={{ marginLeft: 'auto', fontSize: '10px', color: '#484f58' }}>from flowchart</span>
       </div>
-
-      <div style={{
-        flex: 1,
-        overflow: 'auto',
-        background: '#0d1117',
-        border: '1px solid rgba(168,85,247,0.35)',
-        borderRadius: '8px',
-        padding: '14px',
-      }}>
-        <pre style={{
-          margin: 0,
-          fontSize: '12px',
-          color: '#c9d1d9',
-          fontFamily: "'JetBrains Mono','Fira Code',monospace",
-          whiteSpace: 'pre-wrap',
-          wordBreak: 'break-word',
-          lineHeight: '1.7',
-        }}>
+      <div style={{ flex: 1, overflow: 'auto', background: '#010409', border: '1px solid rgba(163,113,247,0.2)', borderRadius: '8px', padding: '14px' }}>
+        <pre style={{ margin: 0, fontSize: '12px', color: '#c9d1d9', fontFamily: 'IBM Plex Mono, monospace', whiteSpace: 'pre-wrap', wordBreak: 'break-word', lineHeight: '1.8' }}>
           {code}
         </pre>
       </div>
-
-      <div style={{ display: 'flex', gap: '8px' }}>
+      <div style={{ display: 'flex', gap: '8px', flexShrink: 0 }}>
         <button
-          onClick={handleCopy}
-          style={{
-            flex: 1,
-            padding: '9px',
-            borderRadius: '8px',
-            border: '1px solid rgba(168,85,247,0.5)',
-            background: copied ? 'rgba(76,175,80,0.15)' : 'rgba(168,85,247,0.1)',
-            color: copied ? '#4caf50' : '#a855f7',
-            fontSize: '12px',
-            fontWeight: '700',
-            cursor: 'pointer',
-            transition: 'all 0.2s',
-          }}
-        >
-          {copied ? '✓ Copied!' : '📋 Copy Code'}
+          onClick={() => { navigator.clipboard.writeText(code).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1800); }); }}
+          style={{ flex: 1, padding: '9px', borderRadius: '8px', border: `1px solid ${copied ? 'rgba(63,185,80,0.5)' : 'rgba(163,113,247,0.4)'}`, background: copied ? 'rgba(63,185,80,0.1)' : 'rgba(163,113,247,0.08)', color: copied ? '#3fb950' : '#a371f7', fontSize: '12px', fontWeight: '700', cursor: 'pointer', transition: 'all 0.2s' }}>
+          {copied ? '✓ Copied!' : '📋 Copy'}
         </button>
         <button
           onClick={() => onLoadInEditor(code)}
-          style={{
-            flex: 1,
-            padding: '9px',
-            borderRadius: '8px',
-            border: '1px solid rgba(76,175,80,0.5)',
-            background: 'rgba(76,175,80,0.1)',
-            color: '#4caf50',
-            fontSize: '12px',
-            fontWeight: '700',
-            cursor: 'pointer',
-            transition: 'all 0.2s',
-          }}
-          title="Switch to Analyze mode and load this code into the editor"
-        >
+          style={{ flex: 1, padding: '9px', borderRadius: '8px', border: '1px solid rgba(63,185,80,0.4)', background: 'rgba(63,185,80,0.08)', color: '#3fb950', fontSize: '12px', fontWeight: '700', cursor: 'pointer', transition: 'all 0.2s' }}>
           🔍 Load &amp; Analyze
         </button>
-      </div>
-
-      <div style={{ fontSize: '10px', color: '#484f58', textAlign: 'center' }}>
-        "Load &amp; Analyze" switches to Analyze mode and populates the editor with this code.
       </div>
     </div>
   );
 };
 
 // ─── SandboxPage ──────────────────────────────────────────────────────────────
-
 export const SandboxPage = () => {
   const navigate = useNavigate();
-  const { user, setUser, isGuest } = useAuth();
-
+  const { user, isGuest } = useAuth();
   const editorRef = useRef<any>(null);
 
-  // ── Shared state ──────────────────────────────────────────────────────────
-
-  /** Which feature is active: "analyze" (Code → Graph) or "build" (Graph → Code) */
   const [mode, setMode] = useState<AppMode>('analyze');
-
   const [code, setCode] = useState<string>(
 `#include <iostream>
 using namespace std;
@@ -187,359 +255,321 @@ int main() {
         hp = hp - 10;
     }
     return 0;
-}`
-  );
-
-  // ── Analyze mode state ────────────────────────────────────────────────────
+}`);
 
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [isTokenDrawerOpen, setIsTokenDrawerOpen] = useState(false);
   const [activeTab, setActiveTab] = useState('lexical');
+  const [builtCode, setBuiltCode] = useState('');
+  const [liveStats, setLiveStats] = useState<LiveStats | null>(null);
+  const [xpFlash, setXpFlash] = useState(0);
 
-  // ── Build mode state ──────────────────────────────────────────────────────
+  const fetchLiveStats = async () => {
+    if (!user?.id) return;
+    try {
+      const { data } = await supabase.from('users').select('totalxp, currentlevel, sandbox_runs').eq('id', user.id).single();
+      if (data) {
+        const level = (data.currentlevel ?? 1) as 1 | 2 | 3 | 4;
+        setLiveStats({ totalXP: data.totalxp ?? 0, currentLevel: level, sandboxRuns: data.sandbox_runs ?? 0, rankName: getLevelName(level) });
+      }
+    } catch (err) { console.error('Failed to fetch live stats:', err); }
+  };
 
-  /** C++ code generated from the user-built flowchart */
-  const [builtCode, setBuiltCode] = useState<string>('');
+  useEffect(() => { fetchLiveStats(); }, [user?.id]); // eslint-disable-line
 
-  // ── Handlers ──────────────────────────────────────────────────────────────
-
-  /** Called when a node in the CFG is clicked — highlights that line in Monaco */
   const handleNodeClick = (line: number) => {
     if (!editorRef.current) return;
-    const editor = editorRef.current;
-    const model = editor.getModel();
+    const model = editorRef.current.getModel();
     if (model) {
-      const lineLength = model.getLineContent(line).length;
-      editor.setSelection({ startLineNumber: line, startColumn: 1, endLineNumber: line, endColumn: lineLength + 1 });
-      editor.revealLineInCenterIfOutsideViewport(line);
-      editor.focus();
+      const len = model.getLineContent(line).length;
+      editorRef.current.setSelection({ startLineNumber: line, startColumn: 1, endLineNumber: line, endColumn: len + 1 });
+      editorRef.current.revealLineInCenterIfOutsideViewport(line);
+      editorRef.current.focus();
     }
   };
 
-  /** Sends current code to the backend for analysis (Analyze mode only) */
   const handleAnalyze = async () => {
     if (!user && !isGuest) return;
-
-    const userId = isGuest ? null : user?.id || null;
-    DataIsolationService.saveSandboxCode(userId, code, 'main.cpp');
-
+    DataIsolationService.saveSandboxCode(isGuest ? null : user?.id || null, code, 'main.cpp');
     setIsAnalyzing(true);
     try {
       const data = await analyzeCode(code);
       setResult(data);
       if (data.success && user) {
-        const xpToEarn = data.gamification?.xpEarned || 10;
-        const updatedUser = { ...user, totalXP: (user.totalXP || 0) + xpToEarn };
-        DataIsolationService.saveUserProgress(user.id, { totalXP: updatedUser.totalXP });
-        setUser(updatedUser);
+        await DatabaseService.logSandboxRun(user.id, code, data.cognitiveComplexity ?? 0, data.symbolTable ?? {});
+        await fetchLiveStats();
+        setXpFlash(1);
+        setTimeout(() => setXpFlash(0), 2200);
       }
-    } catch (error) {
-      console.error('Analysis failed:', error);
-    } finally {
-      setIsAnalyzing(false);
-    }
-  };
-
-  /**
-   * Called by the GenerateCodePanel inside FlowGraph (build mode).
-   * Stores the code for display in the left panel.
-   */
-  const handleCodeGenerated = (generatedCode: string) => {
-    setBuiltCode(generatedCode);
-  };
-
-  /**
-   * Called when the user clicks "Load & Analyze" in the generated code viewer.
-   * Switches to analyze mode and populates the editor with the generated code.
-   */
-  const handleLoadInEditor = (generatedCode: string) => {
-    setCode(generatedCode);
-    setMode('analyze');
-    // Clear previous results so the new code isn't confused with old data
-    setResult(null);
-  };
-
-  /** Switch modes — preserve all state, just change the view */
-  const handleModeChange = (newMode: AppMode) => {
-    setMode(newMode);
+      if (data.success && isGuest) DataIsolationService.saveGuestProgress({ sandboxProgress: { lastCode: code } });
+    } catch (err) { console.error('Analysis failed:', err); }
+    finally { setIsAnalyzing(false); }
   };
 
   const getSymbolList = (): SymbolInfo[] => {
     if (!result?.symbolTable) return [];
     return Array.isArray(result.symbolTable) ? result.symbolTable : Object.values(result.symbolTable);
   };
-
   const symbols = getSymbolList();
+
+  const totalNodes = result?.cfg?.nodes?.length ?? 0;
+  const unsafeCount = result?.safetyChecks?.filter(c => c.status === 'UNSAFE').length ?? 0;
+
+  const TABS = [
+    { id: 'lexical',   label: 'Lexical'   },
+    { id: 'syntactic', label: 'Syntactic' },
+    { id: 'symbols',   label: 'Symbols'   },
+    { id: 'math',      label: 'Math'      },
+    { id: 'logs',      label: 'Logs'      },
+  ];
 
   return (
     <div className="app-container">
+      {/* ── Header ─────────────────────────────────────────────────────── */}
       <header className="app-header">
-        <div
-          className="header-brand"
-          onClick={() => navigate('/home')}
-          style={{ cursor: 'pointer' }}
-          title="Return to Dashboard"
-        >
+        <div className="header-brand" onClick={() => navigate('/home')} title="Return to Dashboard">
           <span className="brand-icon">📦</span>
-          <span className="brand-text">CodeSense Sandbox</span>
+          <span className="brand-text">CodeSense</span>
         </div>
 
-        {/* ── Mode toggle — centre of header ── */}
         <div style={{ position: 'absolute', left: '50%', transform: 'translateX(-50%)' }}>
-          <ModeToggle mode={mode} onChange={handleModeChange} />
+          <ModeToggle mode={mode} onChange={setMode} />
         </div>
 
         <div className="header-actions">
-          {result?.gamification && mode === 'analyze' && (
-            <span className="badge-xp" style={{ marginRight: '15px', color: '#ffc107', fontWeight: 'bold' }}>
-              ★ {result.gamification.xpEarned} XP | {result.gamification.levelTitle.toUpperCase()}
-            </span>
-          )}
-          <button
-            className="exit-btn"
-            onClick={() => navigate('/home')}
-            title="Back to Dashboard"
-          >
-            EXIT ⎋
-          </button>
+          <PlayerHUD user={user} isGuest={isGuest} liveStats={liveStats} xpFlash={xpFlash} />
+          <button className="exit-btn" onClick={() => navigate('/home')}>EXIT ⎋</button>
         </div>
       </header>
 
+      {/* ── Main ───────────────────────────────────────────────────────── */}
       <main className="main-layout">
 
-        {/* ════════════════════════════════════════════════════════════════
-            ANALYZE MODE — Code editor on the left, CFG on the right
-        ════════════════════════════════════════════════════════════════ */}
-        {mode === 'analyze' && (
-          <>
-            <div className="left-column">
-              <section className="editor-section">
-                <div className="section-title">SOURCE CODE INPUT</div>
-                <div className="editor-container">
-                  <CodeEditor
-                    code={code}
-                    onChange={setCode}
-                    onEditorMount={(editor) => (editorRef.current = editor)}
-                  />
-                </div>
-                <div className="action-bar">
-                  <button onClick={handleAnalyze} disabled={isAnalyzing} className="analyze-btn">
-                    {isAnalyzing ? 'RE-CALIBRATING...' : 'ANALYZE CODE'}
+        {/* ══════════════════ ANALYZE MODE ══════════════════════════════ */}
+        {mode === 'analyze' && (<>
+          {/* Left column */}
+          <div className="left-column">
+            {/* Code editor panel */}
+            <section className="editor-section">
+              <div className="section-title">Source Code</div>
+              <div className="editor-container">
+                <CodeEditor code={code} onChange={setCode} onEditorMount={e => (editorRef.current = e)} />
+              </div>
+              <div className="action-bar">
+                <button onClick={handleAnalyze} disabled={isAnalyzing} className="analyze-btn">
+                  {isAnalyzing ? '⟳  Analyzing…' : 'ANALYZE CODE'}
+                </button>
+              </div>
+            </section>
+
+            {/* Analysis tabs panel */}
+            <section className="tabs-section">
+              <div className="tab-headers">
+                {TABS.map(({ id, label }) => (
+                  <button key={id} onClick={() => setActiveTab(id)} className={activeTab === id ? 'tab-link active' : 'tab-link'}>
+                    {label}
                   </button>
-                </div>
-              </section>
+                ))}
+              </div>
 
-              <section className="tabs-section">
-                <div className="tab-headers">
-                  {['lexical', 'syntactic', 'symbols', 'math', 'logs'].map((tab, idx) => (
-                    <button
-                      key={tab}
-                      onClick={() => setActiveTab(tab)}
-                      className={activeTab === tab ? 'tab-link active' : 'tab-link'}
-                    >
-                      {idx + 1}. {tab.charAt(0).toUpperCase() + tab.slice(1)}
-                    </button>
-                  ))}
-                </div>
-
-                <div className="tab-content">
-                  {activeTab === 'lexical' && (
-                    <div className="tab-view-scroll">
-                      {result?.tokens ? (
-                        <div className="token-integration">
-                          <TokenChart tokens={result.tokens} />
-                          <div className="token-action-footer">
-                            <button onClick={() => setIsTokenDrawerOpen(true)} className="view-all-tokens-btn">
-                              Open Token Drawer ➜
-                            </button>
-                          </div>
-                        </div>
-                      ) : (
-                        <div className="placeholder-text">Run analysis to view Lexical Distribution.</div>
-                      )}
-                    </div>
-                  )}
-
-                  {activeTab === 'syntactic' && (
-                    <div className="tab-view-scroll">
-                      {result?.ast ? (
-                        <div className="ast-viewer">
-                          <pre className="ast-json-code">{JSON.stringify(result.ast, null, 2)}</pre>
-                        </div>
-                      ) : (
-                        <div className="placeholder-text">NO SYNTACTIC DATA DETECTED.</div>
-                      )}
-                    </div>
-                  )}
-
-                  {activeTab === 'symbols' && (
-                    <div className="tab-view-scroll">
-                      {symbols.length > 0 ? (
-                        <table className="symbol-table">
-                          <thead>
-                            <tr><th>Type</th><th style={{ textAlign: 'center' }}>Variable</th><th style={{ textAlign: 'right' }}>Line</th></tr>
-                          </thead>
-                          <tbody>
-                            {symbols.map((symbol, i) => (
-                              <tr key={i}>
-                                <td className="symbol-type">{symbol.type}</td>
-                                <td className="symbol-name">{symbol.name}</td>
-                                <td className="symbol-line">{symbol.line}</td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      ) : (
-                        <div className="placeholder-text">NO SYMBOLS DETECTED.</div>
-                      )}
-                    </div>
-                  )}
-
-                  {activeTab === 'math' && (
-                    <div className="tab-view-scroll">
-                      {result?.safetyChecks?.some(check => check.status === 'UNSAFE') ? (
-                        <div className="math-error-container">
-                          <h4 className="math-error-title">⚠️ SYMBOLIC EXECUTION ERROR</h4>
-                          {result.safetyChecks
-                            .filter(check => check.status === 'UNSAFE')
-                            .map((error, i) => (
-                              <div key={`err-${i}`} className="math-error-card">
-                                <div className="math-error-loc">Line {error.line}: {error.operation}</div>
-                                <div className="math-error-msg">{error.message}</div>
-                                <div className="math-error-trace" style={{ color: '#ffa726', fontSize: '11px', marginTop: '5px' }}>
-                                  Status: <strong>CRITICAL FAILURE</strong>
-                                </div>
-                              </div>
-                            ))}
-                        </div>
-                      ) : result?.symbolicExecution && result.symbolicExecution.length > 0 ? (
-                        <table className="math-table">
-                          <thead>
-                            <tr><th>Expression</th><th style={{ textAlign: 'right' }}>Value</th></tr>
-                          </thead>
-                          <tbody>
-                            {result.symbolicExecution.map((entry, i) => (
-                              <tr key={`math-${i}`}>
-                                <td className="math-expr">{entry.expression}</td>
-                                <td className="math-value">{entry.value}</td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      ) : (
-                        <div className="placeholder-text">NO MATHEMATICAL DATA DETECTED.</div>
-                      )}
-                    </div>
-                  )}
-
-                  {activeTab === 'logs' && (
-                    <div className="tab-view-scroll">
-                      <div className="terminal-container">
-                        <div className="terminal-header" style={{ color: '#ffa726', fontSize: '11px', fontWeight: 'bold', textTransform: 'uppercase', marginBottom: '10px' }}>
-                          🛰️ System Analysis Report
-                        </div>
-                        <div className="terminal-output" style={{ background: '#000', borderRadius: '6px', padding: '15px', border: '1px solid #333' }}>
-                          {result?.explanations && result.explanations.length > 0 ? (
-                            result.explanations.map((exp, i) => (
-                              <div key={i} className="log-entry" style={{ color: exp.includes('❌') ? '#f85149' : exp.includes('✅') ? '#3fb950' : '#c9d1d9' }}>
-                                <span style={{ opacity: 0.5, marginRight: '10px' }}>➜</span> {exp}
-                              </div>
-                            ))
-                          ) : (
-                            <div style={{ color: '#484f58', fontStyle: 'italic', fontSize: '13px' }}>System idle... Waiting for analysis.</div>
-                          )}
+              <div className="tab-content">
+                {/* Lexical */}
+                {activeTab === 'lexical' && (
+                  <div className="tab-view-scroll">
+                    {result?.tokens ? (
+                      <div className="token-integration">
+                        <TokenChart tokens={result.tokens} />
+                        <div className="token-action-footer">
+                          <button onClick={() => setIsTokenDrawerOpen(true)} className="view-all-tokens-btn">
+                            Open Token Drawer →
+                          </button>
                         </div>
                       </div>
-                    </div>
-                  )}
-                </div>
-              </section>
-            </div>
+                    ) : (
+                      <div className="placeholder-text">Run analysis to view token distribution.</div>
+                    )}
+                  </div>
+                )}
 
-            <div className="right-column">
-              <div className="section-title">CONTROL FLOW GRAPH</div>
-              <div className="visualizer-container">
-                {result?.success && result.cfg ? (
-                  <FlowGraph
-                    cfg={result.cfg}
-                    safetyChecks={result.safetyChecks}
-                    onNodeClick={handleNodeClick}
-                    isDrawerOpen={isTokenDrawerOpen}
-                  />
-                ) : (
-                  <div className="placeholder-msg">Run analysis to generate Control Flow Graph</div>
+                {/* Syntactic */}
+                {activeTab === 'syntactic' && (
+                  <div className="tab-view-scroll">
+                    {result?.ast ? (
+                      <div className="ast-viewer">
+                        <pre className="ast-json-code">{JSON.stringify(result.ast, null, 2)}</pre>
+                      </div>
+                    ) : (
+                      <div className="placeholder-text">Run analysis to view AST.</div>
+                    )}
+                  </div>
+                )}
+
+                {/* Symbols */}
+                {activeTab === 'symbols' && (
+                  <div className="tab-view-scroll">
+                    {symbols.length > 0 ? (
+                      <table className="symbol-table">
+                        <thead>
+                          <tr>
+                            <th>Type</th>
+                            <th>Variable</th>
+                            <th style={{ textAlign: 'right' }}>Line</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {symbols.map((s, i) => (
+                            <tr key={i}>
+                              <td className="symbol-type">{s.type}</td>
+                              <td className="symbol-name">{s.name}</td>
+                              <td className="symbol-line">{s.line}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    ) : (
+                      <div className="placeholder-text">No symbols detected.</div>
+                    )}
+                  </div>
+                )}
+
+                {/* Math */}
+                {activeTab === 'math' && (
+                  <div className="tab-view-scroll">
+                    {result?.safetyChecks?.some(c => c.status === 'UNSAFE') ? (
+                      <div className="math-error-container">
+                        <div className="math-error-title">⚠ Symbolic Execution Errors</div>
+                        {result.safetyChecks.filter(c => c.status === 'UNSAFE').map((err, i) => (
+                          <div key={i} className="math-error-card">
+                            <div className="math-error-loc">Line {err.line} — {err.operation}</div>
+                            <div className="math-error-msg">{err.message}</div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : result?.symbolicExecution?.length ? (
+                      <table className="math-table">
+                        <thead><tr><th>Expression</th><th style={{ textAlign: 'right' }}>Value</th></tr></thead>
+                        <tbody>
+                          {result.symbolicExecution.map((e, i) => (
+                            <tr key={i}>
+                              <td className="math-expr">{e.expression}</td>
+                              <td className="math-value">{e.value}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    ) : (
+                      <div className="placeholder-text">No mathematical data.</div>
+                    )}
+                  </div>
+                )}
+
+                {/* Logs */}
+                {activeTab === 'logs' && (
+                  <div className="tab-view-scroll">
+                    <div className="terminal-container">
+                      <div className="terminal-header">🛰 System Analysis Report</div>
+                      <div className="terminal-output">
+                        {result?.explanations?.length ? (
+                          result.explanations.map((exp, i) => (
+                            <div key={i} className="log-entry" style={{ color: exp.includes('❌') ? '#f85149' : exp.includes('✅') ? '#3fb950' : '#8b949e' }}>
+                              <span style={{ color: '#444c56' }}>›</span> {exp}
+                            </div>
+                          ))
+                        ) : (
+                          <div style={{ color: '#484f58', fontSize: '12px', fontStyle: 'italic' }}>System idle — waiting for analysis.</div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
                 )}
               </div>
-            </div>
-          </>
-        )}
+            </section>
+          </div>
 
-        {/* ════════════════════════════════════════════════════════════════
-            BUILD MODE — Generated code viewer on the left, blank canvas on the right
-            The two sides are completely independent of the backend.
-        ════════════════════════════════════════════════════════════════ */}
-        {mode === 'build' && (
-          <>
-            <div className="left-column">
-              <section className="editor-section" style={{ flex: 1 }}>
-                <div className="section-title" style={{ color: '#a855f7' }}>
-                  GENERATED C++ OUTPUT
-                </div>
-                <div className="editor-container" style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
-                  <GeneratedCodeViewer
-                    code={builtCode}
-                    onLoadInEditor={handleLoadInEditor}
-                  />
-                </div>
-              </section>
-
-              {/* Build-mode tip card */}
-              <div style={{
-                margin: '0 0 12px 0',
-                padding: '14px 16px',
-                background: 'linear-gradient(135deg,rgba(168,85,247,0.08),rgba(168,85,247,0.04))',
-                border: '1px solid rgba(168,85,247,0.25)',
-                borderRadius: '10px',
-                fontSize: '11px',
-                color: '#8b949e',
-                lineHeight: '1.7',
-              }}>
-                <strong style={{ color: '#a855f7', display: 'block', marginBottom: '4px' }}>🎨 Build Flowchart Mode</strong>
-                Use <strong style={{ color: '#58a6ff' }}>ADD NODE →</strong> on the canvas to build your logic,
-                double-click nodes to write C++ statements, connect them with edges, then hit
-                <strong style={{ color: '#a855f7' }}> ⚡ GENERATE C++ CODE</strong>.<br /><br />
-                Click <strong style={{ color: '#4caf50' }}>🔍 Load &amp; Analyze</strong> to send the result to the analyzer.
-              </div>
-            </div>
-
-            <div className="right-column">
-              <div className="section-title" style={{ color: '#a855f7' }}>
-                FLOWCHART CANVAS
-              </div>
-              <div className="visualizer-container">
-                {/*
-                  No `cfg` prop → FlowGraph starts with a blank canvas.
-                  The built-in GenerateCodePanel (shown inside FlowGraph when cfg is absent)
-                  calls onCodeGenerated, which feeds the left panel.
-                */}
+          {/* Right column — CFG */}
+          <div className="right-column">
+            <div className="section-title cfg-title">Control Flow Graph</div>
+            {result?.success && result.cfg && (
+              <SafetyBanner total={totalNodes} unsafe={unsafeCount} />
+            )}
+            <div className="visualizer-container">
+              {result?.success && result.cfg ? (
                 <FlowGraph
-                  onCodeGenerated={handleCodeGenerated}
+                  cfg={result.cfg}
+                  safetyChecks={result.safetyChecks}
+                  onNodeClick={handleNodeClick}
+                  isDrawerOpen={isTokenDrawerOpen}
                 />
-              </div>
+              ) : (
+                <div className="placeholder-msg">
+                  Run ANALYZE CODE to generate<br />the Control Flow Graph
+                </div>
+              )}
             </div>
-          </>
-        )}
+          </div>
+        </>)}
+
+        {/* ══════════════════ BUILD MODE ════════════════════════════════ */}
+        {mode === 'build' && (<>
+          {/* Left column — generated output */}
+          <div className="left-column">
+            <section className="editor-section" style={{ flex: 1 }}>
+              <div className="section-title build-title">Generated C++ Output</div>
+              <div className="editor-container" style={{ padding: '16px', display: 'flex', flexDirection: 'column' }}>
+                <GeneratedCodeViewer code={builtCode} onLoadInEditor={c => { setCode(c); setMode('analyze'); setResult(null); }} />
+              </div>
+            </section>
+
+            {/* Build instructions card */}
+            <div style={{
+              padding: '14px 16px',
+              background: 'rgba(163,113,247,0.05)',
+              border: '1px solid rgba(163,113,247,0.2)',
+              borderRadius: '10px',
+              fontSize: '12px',
+              color: '#8b949e',
+              lineHeight: '1.8',
+              flexShrink: 0,
+            }}>
+              <div style={{ color: '#a371f7', fontWeight: '700', marginBottom: '6px', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.5px', fontFamily: 'IBM Plex Mono, monospace' }}>
+                🎨 How to build
+              </div>
+              <div>1. Use <strong style={{ color: '#58a6ff' }}>ADD NODE</strong> on the canvas to place shapes</div>
+              <div>2. Double-click nodes to write C++ code inside them</div>
+              <div>3. Connect nodes with edges (drag from handle to handle)</div>
+              <div>4. Label decision edges <strong style={{ color: '#3fb950' }}>true</strong> / <strong style={{ color: '#f85149' }}>false</strong></div>
+              <div>5. Hit <strong style={{ color: '#a371f7' }}>⚡ GENERATE C++</strong> in the canvas panel</div>
+              <div style={{ marginTop: '8px', color: '#484f58' }}>Then use <strong style={{ color: '#3fb950' }}>🔍 Load &amp; Analyze</strong> to send to the analyzer.</div>
+            </div>
+          </div>
+
+          {/* Right column — canvas */}
+          <div className="right-column">
+            <div className="section-title build-title">Flowchart Canvas</div>
+            <div className="visualizer-container">
+              <FlowGraph onCodeGenerated={setBuiltCode} />
+            </div>
+          </div>
+        </>)}
       </main>
 
-      {/* Token drawer is only relevant in analyze mode */}
+      {/* Token drawer — analyze mode only */}
       {mode === 'analyze' && (
-        <TokenDrawer
-          tokens={result?.tokens || []}
-          isOpen={isTokenDrawerOpen}
-          onClose={() => setIsTokenDrawerOpen(false)}
-        />
+        <TokenDrawer tokens={result?.tokens || []} isOpen={isTokenDrawerOpen} onClose={() => setIsTokenDrawerOpen(false)} />
       )}
+
+      <style>{`
+        @keyframes xpFloat {
+          0%   { opacity: 1; transform: translateY(0);    }
+          70%  { opacity: 1; transform: translateY(-18px);}
+          100% { opacity: 0; transform: translateY(-28px);}
+        }
+        @keyframes shimmer {
+          0%, 100% { opacity: 0.3; }
+          50%       { opacity: 0.8; }
+        }
+      `}</style>
     </div>
   );
 };
