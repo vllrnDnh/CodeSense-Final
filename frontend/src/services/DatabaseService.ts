@@ -6,14 +6,15 @@ export const DatabaseService = {
 
   // ── AUTHENTICATION ──────────────────────────────────────────────────────────
 
-  // LOGIN: Looks up the real email by playerName, then signs in with Supabase Auth
+  // LOGIN: Looks up the real email by playerName (case-insensitive), then signs in with Supabase Auth
   async login(playerName: string, secretCode: string): Promise<ExplorerProfile> {
     try {
-      // 1. Look up the real email from public.users by playerName
+      // 1. Look up the real email from public.users by playerName (case-insensitive + trimmed)
       const { data: userRow, error: lookupError } = await supabase
         .from('users')
         .select('email')
-        .eq('playername', playerName)
+        .ilike('playername', playerName.trim())  // case-insensitive match
+        .limit(1)
         .maybeSingle()
 
       if (lookupError || !userRow?.email) {
@@ -57,14 +58,13 @@ export const DatabaseService = {
 
   // SIGNUP: Creates a Supabase Auth user and a public.users profile row.
   //
-  // KEY FIXES vs. the old version:
-  //  1. Username/email uniqueness is checked via Supabase Auth signUp()
-  //     returning an error, NOT by querying public.users before the auth user
-  //     exists (that query fails silently under RLS for anon callers).
-  //  2. After signUp(), we poll for the trigger-created row instead of using
-  //     a fixed 500 ms timeout — the trigger can take 1–3 s under cold starts.
-  //  3. All thrown errors carry distinct codes so the UI can show precise
-  //     messages instead of the generic "name may be taken" fallback.
+  // KEY FIXES:
+  //  1. Pre-checks for duplicate playername (case-insensitive) before auth signup,
+  //     giving a friendly USERNAME_TAKEN error instead of a DB crash.
+  //  2. Username/email uniqueness is also enforced by the DB unique index.
+  //  3. After signUp(), we poll for the trigger-created row instead of using
+  //     a fixed timeout — the trigger can take 1–3s under cold starts.
+  //  4. All thrown errors carry distinct codes so the UI can show precise messages.
   async signUp(
     playerName: string,
     secretCode: string,
@@ -72,6 +72,18 @@ export const DatabaseService = {
     characterType: 'squire' | 'knight' | 'duke' | 'lord'
   ): Promise<ExplorerProfile> {
     try {
+      // ── Step 0: Pre-check for duplicate playername (case-insensitive) ───────
+      const { data: existing } = await supabase
+        .from('users')
+        .select('id')
+        .ilike('playername', playerName.trim())
+        .limit(1)
+        .maybeSingle()
+
+      if (existing) {
+        throw new Error('USERNAME_TAKEN')
+      }
+
       // ── Step 1: Create the Supabase Auth user ──────────────────────────────
       // Pass playerName in metadata so the DB trigger can write it to
       // public.users.playername without a separate update call.
@@ -238,9 +250,9 @@ export const DatabaseService = {
       const { data: updated } = await supabase
         .from('users')
         .update({
-          totalxp:    newTotal,
+          totalxp:      newTotal,
           currentlevel: newLevel,
-          lastactive: new Date().toISOString(),
+          lastactive:   new Date().toISOString(),
         })
         .eq('id', userId)
         .select()
