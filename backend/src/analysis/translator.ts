@@ -1,5 +1,5 @@
 /**
- * CodeSense Mentor (Translator) - Pedagogical Edition
+ * CodeSense Mentor (Translator) 
  * Explains C++ code in simple, student-friendly language.
  * Uses metaphors, real-world examples, and step-by-step breakdowns.
  */
@@ -11,7 +11,6 @@ import {
   WhileLoopNode,
   ForLoopNode,
   AssignmentNode,
-  BinaryOpNode,
   FunctionDeclNode,
   FunctionPrototypeNode,
   ReturnStatementNode,
@@ -23,32 +22,25 @@ import {
   ConditionalExpressionNode,
   CastExpressionNode,
   SizeofExpressionNode,
-  UnaryOpNode
+  UnaryOpNode,
+  ArrayAccessNode,
+  InitializerListNode,
 } from '../types';
 
 export class Translator {
   private explanations: string[] = [];
   private indentLevel: number = 0;
 
-  /**
-   * Clean up names from parser (handles arrays and weird formats)
-   */
   private cleanName(name: any): string {
     if (!name) return 'unknown';
     const flatName = Array.isArray(name) ? name.flat(Infinity).join('') : String(name);
     return flatName.replace(/,/g, '').trim();
   }
 
-  /**
-   * Add proper indentation for nested explanations
-   */
   private indent(): string {
     return '  '.repeat(this.indentLevel);
   }
 
-  /**
-   * Main translation entry point
-   */
   translate(ast: ASTNode): string[] {
     this.explanations = [];
     this.indentLevel = 0;
@@ -56,19 +48,15 @@ export class Translator {
     return this.explanations;
   }
 
-  /**
-   * Visitor dispatcher
-   */
   private visit(node: ASTNode | null | string | undefined): void {
     if (!node || typeof node === 'string') return;
-    
-    // Handle special I/O statements
-    if (node.type === 'CoutStatement') return this.visitCoutStatement(node);
-    if (node.type === 'CinStatement') return this.visitCinStatement(node);
 
-    const methodName = `visit${node.type}` as keyof this;
-    if (typeof this[methodName] === 'function') {
-      (this[methodName] as any).call(this, node);
+    if (node.type === 'CoutStatement') return this.visitCoutStatement(node as any);
+    if (node.type === 'CinStatement')  return this.visitCinStatement(node as any);
+
+    const methodName = `visit${node.type}`;
+    if (typeof (this as any)[methodName] === 'function') {
+      (this as any)[methodName](node);
     } else if ('body' in node && Array.isArray((node as any).body)) {
       (node as any).body.forEach((stmt: ASTNode) => this.visit(stmt));
     } else if ('statements' in node && Array.isArray((node as any).statements)) {
@@ -81,28 +69,42 @@ export class Translator {
   // =========================================================================
 
   private visitProgram(node: ProgramNode): void {
-    this.explanations.push("🎬 **Your Program Starts Here**");
-    this.explanations.push("");
-    
+    this.explanations.push('🎬 **Your Program Starts Here**');
+    this.explanations.push('');
+
     if (node.directives && node.directives.length > 0) {
       this.explanations.push("📚 **Libraries You're Using:**");
       node.directives.forEach(d => {
-        if ((d as any).name === 'iostream') {
-          this.explanations.push("   • iostream - for keyboard input (cin) and screen output (cout)");
-        } else {
-          this.explanations.push(`   • ${(d as any).name}`);
+        const dn = d as any;
+        if (dn.type === 'Include') {
+          const name = dn.name as string;
+          const desc = HEADER_DESCRIPTIONS[name] || name;
+          this.explanations.push(`   • <${name}> — ${desc}`);
         }
       });
-      this.explanations.push("");
+      this.explanations.push('');
     }
-    
-    this.explanations.push("📖 **Step-by-Step Walkthrough:**");
-    this.explanations.push("");
-    
+
+    if ((node as any).namespace) {
+      this.explanations.push("🌐 **Namespace:** using namespace std;");
+      this.explanations.push("   (Lets you write 'cout' instead of 'std::cout')");
+      this.explanations.push('');
+    }
+
+    this.explanations.push('📖 **Step-by-Step Walkthrough:**');
+    this.explanations.push('');
+
     node.body.forEach(stmt => this.visit(stmt));
-    
-    this.explanations.push("");
-    this.explanations.push("✅ **Program Complete!**");
+
+    this.explanations.push('');
+    this.explanations.push('✅ **Program Complete!**');
+  }
+
+  // =========================================================================
+  //  Multiple Variable Declarations  int x=1, y=2;
+  // =========================================================================
+  private visitMultipleVariableDecl(node: any): void {
+    (node.declarations || []).forEach((d: any) => this.visitVariableDecl(d));
   }
 
   // =========================================================================
@@ -111,43 +113,43 @@ export class Translator {
 
   private visitVariableDecl(node: VariableDeclNode): void {
     const name = this.cleanName(node.name);
-    const isConstant = node.modifiers && node.modifiers.includes('const');
-    const isArray = node.dimensions && node.dimensions.length > 0;
-    
-    // Main declaration
-    if (isConstant) {
-      this.explanations.push(`${this.indent()}🔒 **Constant Box Created: '${name}'**`);
-      this.explanations.push(`${this.indent()}   Type: ${node.varType} (can NEVER be changed)`);
+    const isConst  = Array.isArray((node as any).modifiers) && (node as any).modifiers.includes('const');
+    const isPtr    = node.varType.includes('*');
+    const isArray  = node.dimensions && node.dimensions.length > 0;
+
+    if (isConst) {
+      this.explanations.push(`${this.indent()}❄️ **Frozen Value (Constant): '${name}'** (type: ${node.varType})`);
+      this.explanations.push(`${this.indent()}   Frozen — its value can NEVER change after initialization.`);
+    } else if (isPtr) {
+      this.explanations.push(`${this.indent()}📌 **Pointer: '${name}'** (type: ${node.varType})`);
+      this.explanations.push(`${this.indent()}   Stores a memory address, not a direct value.`);
     } else if (isArray) {
       const size = node.dimensions?.[0] ? this.formatExpr(node.dimensions[0]) : '?';
-      this.explanations.push(`${this.indent()}📦 **Array Created: '${name}[${size}]'**`);
-      this.explanations.push(`${this.indent()}   Like a row of ${size} boxes, each storing a ${node.varType}`);
+      this.explanations.push(`${this.indent()}📦 **Array: '${name}[${size}]'** (element type: ${node.varType})`);
+      this.explanations.push(`${this.indent()}   Like a row of ${size} numbered boxes, each storing one ${node.varType}.`);
     } else {
-      this.explanations.push(`${this.indent()}📦 **Variable Box: '${name}'**`);
-      this.explanations.push(`${this.indent()}   Type: ${node.varType}`);
+      this.explanations.push(`${this.indent()}📦 **Declare a ${node.varType} variable named '${name}'**`);
     }
-    
-    // Initialization
+
     if (node.value) {
       const valueStr = this.formatExpr(node.value);
       this.explanations.push(`${this.indent()}   Starting value: ${valueStr}`);
-      this.explanations.push(`${this.indent()}   💡 Think: Label a box "${name}" and put ${valueStr} inside`);
     } else {
-      this.explanations.push(`${this.indent()}   ⚠️  No starting value - box is empty!`);
+      this.explanations.push(`${this.indent()}   ⚠️  No starting value — box is empty (uninitialized)!`);
     }
-    
-    this.explanations.push("");
+    this.explanations.push('');
   }
 
   private visitAssignment(node: AssignmentNode): void {
-    const target = typeof node.target === 'string' ? this.cleanName(node.target) : 'array slot';
+    const target = typeof node.target === 'string'
+      ? this.cleanName(node.target)
+      : this.formatExpr(node.target as any);
     const value = this.formatExpr(node.value);
-    
-    this.explanations.push(`${this.indent()}✏️  **Update Box: '${target}'**`);
-    this.explanations.push(`${this.indent()}   Old contents? Thrown away!`);
-    this.explanations.push(`${this.indent()}   New contents: ${value}`);
-    this.explanations.push(`${this.indent()}   💡 Like replacing what's in the box with something new`);
-    this.explanations.push("");
+    const opLabel = COMPOUND_OP_LABELS[node.operator] || 'update';
+
+    this.explanations.push(`${this.indent()}✏️  **${opLabel}: '${target}'**`);
+    this.explanations.push(`${this.indent()}   New value: ${value}`);
+    this.explanations.push('');
   }
 
   // =========================================================================
@@ -155,74 +157,68 @@ export class Translator {
   // =========================================================================
 
   private visitFunctionPrototype(node: FunctionPrototypeNode): void {
-    const name = this.cleanName(node.name);
-    const params = node.params.map((p: any) => 
-      p.name ? `${p.varType} ${p.name}` : p.varType
+    const name   = this.cleanName(node.name);
+    const params = node.params.map((p: any) =>
+      p.name ? `${p.varType} ${p.name}` : p.varType,
     ).join(', ');
-    
-    this.explanations.push(`${this.indent()}📢 **Task Announcement: '${name}'**`);
-    this.explanations.push(`${this.indent()}   What it needs: ${params || 'nothing'}`);
-    this.explanations.push(`${this.indent()}   What it returns: ${node.returnType}`);
-    this.explanations.push(`${this.indent()}   💡 Like posting a job description before hiring someone`);
-    this.explanations.push(`${this.indent()}   (Full details will come later)`);
-    this.explanations.push("");
+
+    this.explanations.push(`${this.indent()}📢 **Function Announcement: '${name}'**`);
+    this.explanations.push(`${this.indent()}   Parameters: ${params || 'none'}`);
+    this.explanations.push(`${this.indent()}   Returns: ${node.returnType}`);
+    this.explanations.push(`${this.indent()}   💡 This is a forward declaration — the full code comes later.`);
+    this.explanations.push('');
   }
 
   private visitFunctionDecl(node: FunctionDeclNode): void {
-    const name = this.cleanName(node.name);
+    const name   = this.cleanName(node.name);
     const isMain = name === 'main';
-    
+
     if (isMain) {
-      this.explanations.push("");
-      this.explanations.push("🚀 **MAIN FUNCTION - Your Program Starts Here!**");
-      this.explanations.push("   This is like the 'Play' button for your code");
-      this.explanations.push("   Everything inside runs from top to bottom");
+      this.explanations.push('');
+      this.explanations.push('🚀 **MAIN FUNCTION — Where Your Program Begins!**');
+      this.explanations.push("   Everything inside runs from top to bottom.");
     } else {
-      const params = node.params.map((p: any) => 
-        `${p.varType} ${p.name || '?'}`
+      const params = node.params.map((p: any) =>
+        `${p.varType} ${p.name || '?'}`,
       ).join(', ');
-      
-      this.explanations.push(`${this.indent()}🔧 **Task Definition: '${name}'**`);
+      this.explanations.push(`${this.indent()}🔧 **Function: '${name}'**`);
       this.explanations.push(`${this.indent()}   Inputs: ${params || 'none'}`);
-      this.explanations.push(`${this.indent()}   Output: ${node.returnType}`);
+      this.explanations.push(`${this.indent()}   Returns: ${node.returnType}`);
     }
-    
-    this.explanations.push("");
-    this.explanations.push(`${this.indent()}▶️  **Task Steps:**`);
+
+    this.explanations.push('');
+    this.explanations.push(`${this.indent()}▶️  **Steps:**`);
     this.indentLevel++;
-    
     if (node.body && node.body.length > 0) {
       node.body.forEach(stmt => this.visit(stmt));
     } else {
       this.explanations.push(`${this.indent()}(No steps yet)`);
     }
-    
     this.indentLevel--;
-    this.explanations.push("");
+    this.explanations.push('');
   }
 
   private visitFunctionCall(node: FunctionCallNode): void {
-    const name = this.cleanName(node.name);
+    const name     = this.cleanName(node.name);
     const argCount = node.arguments?.length || 0;
-    
-    this.explanations.push(`${this.indent()}📞 **Call Task: '${name}'**`);
+
+    this.explanations.push(`${this.indent()}📞 **Call: '${name}'**`);
     if (argCount > 0) {
-      this.explanations.push(`${this.indent()}   Sending ${argCount} value(s) to work with`);
+      const args = node.arguments.map(a => this.formatExpr(a)).join(', ');
+      this.explanations.push(`${this.indent()}   Arguments: ${args}`);
     }
-    this.explanations.push(`${this.indent()}   💡 Like asking someone to do their job now`);
-    this.explanations.push("");
+    this.explanations.push('');
   }
 
   private visitReturnStatement(node: ReturnStatementNode): void {
     if (node.value) {
       const value = this.formatExpr(node.value);
       this.explanations.push(`${this.indent()}↩️  **Return: ${value}**`);
-      this.explanations.push(`${this.indent()}   Task complete! Handing back result`);
+      this.explanations.push(`${this.indent()}   Task complete! Handing back the result.`);
     } else {
-      this.explanations.push(`${this.indent()}↩️  **Return**`);
-      this.explanations.push(`${this.indent()}   Task complete! Going back`);
+      this.explanations.push(`${this.indent()}↩️  **Return** (void — no value handed back)`);
     }
-    this.explanations.push("");
+    this.explanations.push('');
   }
 
   // =========================================================================
@@ -231,14 +227,12 @@ export class Translator {
 
   private visitIfStatement(node: IfStatementNode): void {
     const condition = this.formatExpr(node.condition);
-    
-    this.explanations.push(`${this.indent()}🤔 **Decision Point**`);
-    this.explanations.push(`${this.indent()}   Question: Is ${condition} true?`);
-    this.explanations.push("");
-    
+    this.explanations.push(`${this.indent()}🤔 **Decision: Is ${condition} true?**`);
+    this.explanations.push('');
+
     this.explanations.push(`${this.indent()}✅ **If YES:**`);
     this.indentLevel++;
-    node.thenBranch.forEach(stmt => this.visit(stmt));
+    (node.thenBranch || []).forEach(stmt => this.visit(stmt));
     this.indentLevel--;
 
     if (node.elseBranch && node.elseBranch.length > 0) {
@@ -247,86 +241,66 @@ export class Translator {
       node.elseBranch.forEach(stmt => this.visit(stmt));
       this.indentLevel--;
     }
-    
-    this.explanations.push(`${this.indent()}💡 Like choosing between two paths at a fork in the road`);
-    this.explanations.push("");
+    this.explanations.push(`${this.indent()}💡 Like choosing a path at a crossroads.`);
+    this.explanations.push('');
   }
 
   private visitWhileLoop(node: WhileLoopNode): void {
     const condition = this.formatExpr(node.condition);
-    
     this.explanations.push(`${this.indent()}🔁 **While Loop**`);
-    this.explanations.push(`${this.indent()}   Keep doing this as long as: ${condition}`);
-    this.explanations.push(`${this.indent()}   💡 Like "Keep washing dishes while there are dirty dishes"`);
-    this.explanations.push("");
-    
-    this.explanations.push(`${this.indent()}🔄 **Repeat These Steps:**`);
+    this.explanations.push(`${this.indent()}   Keep repeating as long as: ${condition}`);
+    this.explanations.push(`${this.indent()}   💡 Like "Keep stirring while the sauce is lumpy"`);
+    this.explanations.push('');
+
+    this.explanations.push(`${this.indent()}🔄 **Repeat:**`);
     this.indentLevel++;
-    node.body.forEach(stmt => this.visit(stmt));
+    (node.body || []).forEach(stmt => this.visit(stmt));
     this.indentLevel--;
-    
-    this.explanations.push(`${this.indent()}   Then check condition again...`);
-    this.explanations.push("");
+    this.explanations.push(`${this.indent()}   ↑ Then check condition again…`);
+    this.explanations.push('');
   }
 
   private visitDoWhileLoop(node: DoWhileLoopNode): void {
     const condition = this.formatExpr(node.condition);
-    
-    this.explanations.push(`${this.indent()}🔁 **Do-While Loop**`);
-    this.explanations.push(`${this.indent()}   💡 Do something FIRST, then decide if you should repeat`);
-    this.explanations.push("");
-    
-    this.explanations.push(`${this.indent()}🔄 **These Steps (at least once):**`);
+    this.explanations.push(`${this.indent()}🔁 **Do-While Loop** (runs at least once)`);
+    this.explanations.push('');
+
+    this.explanations.push(`${this.indent()}🔄 **First, do these steps:**`);
     this.indentLevel++;
-    node.body.forEach(stmt => this.visit(stmt));
+    (node.body || []).forEach(stmt => this.visit(stmt));
     this.indentLevel--;
-    
-    this.explanations.push(`${this.indent()}❓ **Should we repeat?**`);
-    this.explanations.push(`${this.indent()}   Check: ${condition}`);
-    this.explanations.push(`${this.indent()}   If true → go back to start`);
-    this.explanations.push(`${this.indent()}   If false → continue forward`);
-    this.explanations.push("");
+
+    this.explanations.push(`${this.indent()}❓ **Repeat?** Check: ${condition}`);
+    this.explanations.push(`${this.indent()}   If true → go back; If false → continue`);
+    this.explanations.push('');
   }
 
   private visitForLoop(node: ForLoopNode): void {
     this.explanations.push(`${this.indent()}🔢 **For Loop (Counting Loop)**`);
-    this.explanations.push(`${this.indent()}   💡 Perfect for doing something a specific number of times`);
-    this.explanations.push("");
-    
-    if (node.init) {
-      this.explanations.push(`${this.indent()}1️⃣ **Setup:** ${this.formatExpr(node.init)}`);
-    }
-    if (node.condition) {
-      this.explanations.push(`${this.indent()}2️⃣ **Keep going while:** ${this.formatExpr(node.condition)}`);
-    }
-    if (node.update) {
-      this.explanations.push(`${this.indent()}3️⃣ **After each round:** ${this.formatExpr(node.update)}`);
-    }
-    this.explanations.push("");
-    
-    this.explanations.push(`${this.indent()}🔄 **Repeat These Steps:**`);
+
+    if (node.init)      this.explanations.push(`${this.indent()}   1️⃣  Start:      ${this.formatExpr(node.init)}`);
+    if (node.condition) this.explanations.push(`${this.indent()}   2️⃣  While:      ${this.formatExpr(node.condition)}`);
+    if (node.update)    this.explanations.push(`${this.indent()}   3️⃣  Each round: ${this.formatExpr(node.update)}`);
+    this.explanations.push('');
+
+    this.explanations.push(`${this.indent()}🔄 **Repeat:**`);
     this.indentLevel++;
-    node.body.forEach(stmt => this.visit(stmt));
+    (node.body || []).forEach(stmt => this.visit(stmt));
     this.indentLevel--;
-    this.explanations.push("");
+    this.explanations.push('');
   }
 
   private visitSwitchStatement(node: SwitchStatementNode): void {
     const condition = this.formatExpr(node.condition);
-    
-    this.explanations.push(`${this.indent()}🎯 **Menu Selection (Switch)**`);
-    this.explanations.push(`${this.indent()}   Looking at: ${condition}`);
-    this.explanations.push(`${this.indent()}   💡 Like choosing from a restaurant menu`);
-    this.explanations.push("");
-    
-    node.cases.forEach((c, index) => {
-      if (c.value) {
-        const caseValue = this.formatExpr(c.value);
-        this.explanations.push(`${this.indent()}${index + 1}. **If it equals ${caseValue}:**`);
-      } else {
-        this.explanations.push(`${this.indent()}${index + 1}. **Otherwise (Default):**`);
-      }
-      
+    this.explanations.push(`${this.indent()}🎯 **Switch (Menu Selection)**`);
+    this.explanations.push(`${this.indent()}   Looking at the value of: ${condition}`);
+    this.explanations.push('');
+
+    node.cases.forEach((c, i) => {
+      const label = c.value
+        ? `If ${condition} == ${this.formatExpr(c.value)}`
+        : 'Default (otherwise)';
+      this.explanations.push(`${this.indent()}${i + 1}. **${label}:**`);
       this.indentLevel++;
       if (c.statements && c.statements.length > 0) {
         c.statements.forEach(stmt => this.visit(stmt));
@@ -335,7 +309,73 @@ export class Translator {
       }
       this.indentLevel--;
     });
-    this.explanations.push("");
+    this.explanations.push('');
+  }
+
+  // =========================================================================
+  //  CP2: Dynamic Memory
+  // =========================================================================
+
+  private visitNewExpression(node: any): void {
+    const baseType = node.baseType;
+    if (node.size) {
+      const size = this.formatExpr(node.size);
+      this.explanations.push(`${this.indent()}🆕 **Dynamic Array Allocation**`);
+      this.explanations.push(`${this.indent()}   Reserves space for ${size} ${baseType} values on the heap.`);
+      this.explanations.push(`${this.indent()}   ⚠️  Must be freed later with 'delete[]'!`);
+    } else {
+      this.explanations.push(`${this.indent()}🆕 **Dynamic Object Allocation (new ${baseType})**`);
+      this.explanations.push(`${this.indent()}   Creates one ${baseType} object on the heap.`);
+      this.explanations.push(`${this.indent()}   ⚠️  Must be freed later with 'delete'!`);
+    }
+    this.explanations.push('');
+  }
+
+  private visitDeleteStatement(node: any): void {
+    const target = this.cleanName(node.target);
+    if (node.isArray) {
+      this.explanations.push(`${this.indent()}🗑️  **Free Dynamic Array: delete[] ${target}**`);
+      this.explanations.push(`${this.indent()}   Returns all memory used by the array back to the system.`);
+    } else {
+      this.explanations.push(`${this.indent()}🗑️  **Free Dynamic Object: delete ${target}**`);
+      this.explanations.push(`${this.indent()}   Returns memory for the single object back to the system.`);
+    }
+    this.explanations.push(`${this.indent()}   💡 After delete, the pointer is dangling — don't use it!`);
+    this.explanations.push('');
+  }
+
+  // =========================================================================
+  //  ARRAYS
+  // =========================================================================
+
+  private visitArrayAccess(node: ArrayAccessNode): void {
+    const name    = this.cleanName(node.name);
+    const indices = node.indices.map(i => this.formatExpr(i)).join('][');
+    this.explanations.push(`${this.indent()}🔍 **Read Array Element: ${name}[${indices}]**`);
+    this.explanations.push(`${this.indent()}   Accessing box number ${indices} inside '${name}'.`);
+    this.explanations.push('');
+  }
+
+  private visitInitializerList(node: InitializerListNode): void {
+    const values = (node.values || []).map(v => this.formatExpr(v)).join(', ');
+    this.explanations.push(`${this.indent()}📋 **Initializer List: { ${values} }**`);
+    this.explanations.push(`${this.indent()}   Fills multiple boxes at once with these values.`);
+    this.explanations.push('');
+  }
+
+  // =========================================================================
+  //  LOOP CONTROL
+  // =========================================================================
+
+  private visitLoopControl(node: any): void {
+    if (node.value === 'break') {
+      this.explanations.push(`${this.indent()}🛑 **break** — Exit the loop immediately`);
+      this.explanations.push(`${this.indent()}   💡 Like pulling an emergency stop cord.`);
+    } else if (node.value === 'continue') {
+      this.explanations.push(`${this.indent()}⏭️  **continue** — Skip to the next loop iteration`);
+      this.explanations.push(`${this.indent()}   💡 Like skipping a song and going to the next one.`);
+    }
+    this.explanations.push('');
   }
 
   // =========================================================================
@@ -343,28 +383,35 @@ export class Translator {
   // =========================================================================
 
   private visitCoutStatement(node: any): void {
-    const outputs = node.values 
-      ? node.values.map((expr: any) => this.formatExpr(expr)).join(' + ')
-      : "something";
-
-    this.explanations.push(`${this.indent()}🖥️  **Show on Screen**`);
-    this.explanations.push(`${this.indent()}   Display: ${outputs}`);
-    this.explanations.push(`${this.indent()}   💡 Like printing a message on paper`);
-    this.explanations.push("");
+    const outputs = node.values
+      ? node.values.map((expr: any) => this.formatExpr(expr)).join(' ⟩⟩ ')
+      : 'something';
+    this.explanations.push(`${this.indent()}🖥️  **Output to Screen**`);
+    this.explanations.push(`${this.indent()}   Displays: ${outputs}`);
+    this.explanations.push('');
   }
 
   private visitCinStatement(node: any): void {
-    const targetNames = node.targets 
-      ? node.targets.map((t: any) => 
-          typeof t === 'string' ? t : this.cleanName(t.name)
+    const targetNames = node.targets
+      ? node.targets.map((t: any) =>
+          typeof t === 'string' ? t : this.cleanName(t.name),
         ).join(', ')
-      : "a variable";
-    
-    this.explanations.push(`${this.indent()}⌨️  **Get Input from User**`);
-    this.explanations.push(`${this.indent()}   Waiting for user to type...`);
-    this.explanations.push(`${this.indent()}   Store in: ${targetNames}`);
-    this.explanations.push(`${this.indent()}   💡 Like asking someone a question and writing down their answer`);
-    this.explanations.push("");
+      : 'a variable';
+    this.explanations.push(`${this.indent()}⌨️  **Input from User**`);
+    this.explanations.push(`${this.indent()}   Waits for keyboard input → stored in: ${targetNames}`);
+    this.explanations.push('');
+  }
+
+  // =========================================================================
+  //  BLOCK
+  // =========================================================================
+
+  private visitBlock(node: any): void {
+    (node.statements || []).forEach((s: ASTNode) => this.visit(s));
+  }
+
+  private visitExpressionStatement(node: ExpressionStatementNode): void {
+    if (node.expression) this.visit(node.expression);
   }
 
   // =========================================================================
@@ -372,83 +419,66 @@ export class Translator {
   // =========================================================================
 
   private visitPreIncrement(node: UnaryOpNode): void {
-    const varName = this.cleanName(node.operand);
-    this.explanations.push(`${this.indent()}⬆️  **++${varName} (Pre-Increment)**`);
-    this.explanations.push(`${this.indent()}   Add 1 FIRST, then use the value`);
-    this.explanations.push(`${this.indent()}   💡 Example: If x=5, then y=(++x) makes x=6, y=6`);
-    this.explanations.push("");
+    const v = this.cleanName(node.operand);
+    this.explanations.push(`${this.indent()}⬆️  **++${v}** — Add 1 to ${v} FIRST, then use it`);
+    this.explanations.push('');
   }
 
   private visitPostIncrement(node: UnaryOpNode): void {
-    const varName = this.cleanName(node.operand);
-    this.explanations.push(`${this.indent()}⬆️  **${varName}++ (Post-Increment)**`);
-    this.explanations.push(`${this.indent()}   Use the value FIRST, then add 1`);
-    this.explanations.push(`${this.indent()}   💡 Example: If x=5, then y=(x++) makes y=5, x=6`);
-    this.explanations.push("");
+    const v = this.cleanName(node.operand);
+    this.explanations.push(`${this.indent()}⬆️  **${v}++** — Use ${v}'s current value FIRST, then add 1`);
+    this.explanations.push('');
   }
 
   private visitPreDecrement(node: UnaryOpNode): void {
-    const varName = this.cleanName(node.operand);
-    this.explanations.push(`${this.indent()}⬇️  **--${varName} (Pre-Decrement)**`);
-    this.explanations.push(`${this.indent()}   Subtract 1 FIRST, then use the value`);
-    this.explanations.push("");
+    const v = this.cleanName(node.operand);
+    this.explanations.push(`${this.indent()}⬇️  **--${v}** — Subtract 1 from ${v} FIRST, then use it`);
+    this.explanations.push('');
   }
 
   private visitPostDecrement(node: UnaryOpNode): void {
-    const varName = this.cleanName(node.operand);
-    this.explanations.push(`${this.indent()}⬇️  **${varName}-- (Post-Decrement)**`);
-    this.explanations.push(`${this.indent()}   Use the value FIRST, then subtract 1`);
-    this.explanations.push("");
+    const v = this.cleanName(node.operand);
+    this.explanations.push(`${this.indent()}⬇️  **${v}--** — Use ${v}'s current value FIRST, then subtract 1`);
+    this.explanations.push('');
   }
 
   private visitConditionalExpression(node: ConditionalExpressionNode): void {
-    const cond = this.formatExpr(node.condition);
-    const ifTrue = this.formatExpr(node.trueExpression);
-    const ifFalse = this.formatExpr(node.falseExpression);
-    
-    this.explanations.push(`${this.indent()}❓ **Ternary (Shortcut If-Else)**`);
-    this.explanations.push(`${this.indent()}   Question: ${cond}`);
-    this.explanations.push(`${this.indent()}   If true → use ${ifTrue}`);
-    this.explanations.push(`${this.indent()}   If false → use ${ifFalse}`);
-    this.explanations.push(`${this.indent()}   💡 Format: condition ? valueIfTrue : valueIfFalse`);
-    this.explanations.push("");
+    const cond     = this.formatExpr(node.condition);
+    const ifTrue   = this.formatExpr(node.trueExpression);
+    const ifFalse  = this.formatExpr(node.falseExpression);
+    this.explanations.push(`${this.indent()}❓ **Ternary: ${cond} ? ${ifTrue} : ${ifFalse}**`);
+    this.explanations.push(`${this.indent()}   If ${cond} is true → use ${ifTrue}, else use ${ifFalse}`);
+    this.explanations.push('');
   }
 
   private visitCastExpression(node: CastExpressionNode): void {
     const value = this.formatExpr(node.operand);
-    this.explanations.push(`${this.indent()}🔄 **Type Conversion**`);
-    this.explanations.push(`${this.indent()}   Convert ${value} to ${node.targetType}`);
-    this.explanations.push(`${this.indent()}   ⚠️  Warning: May lose precision!`);
-    this.explanations.push(`${this.indent()}   💡 Like pouring liquid from a big cup to a small one`);
-    this.explanations.push("");
+    this.explanations.push(`${this.indent()}🔄 **Type Cast: (${node.targetType}) ${value}**`);
+    this.explanations.push(`${this.indent()}   Converts ${value} to type ${node.targetType}.`);
+    this.explanations.push(`${this.indent()}   ⚠️  May lose precision when narrowing (e.g. double → int).`);
+    this.explanations.push('');
   }
 
   private visitSizeofExpression(node: SizeofExpressionNode): void {
     const value = this.formatExpr(node.value);
-    this.explanations.push(`${this.indent()}📏 **Measure Memory Size**`);
-    this.explanations.push(`${this.indent()}   How many bytes does ${value} occupy?`);
-    this.explanations.push(`${this.indent()}   💡 Common sizes: int=4 bytes, char=1 byte, double=8 bytes`);
-    this.explanations.push("");
+    this.explanations.push(`${this.indent()}📏 **sizeof(${value})**`);
+    this.explanations.push(`${this.indent()}   Asks: "How many bytes does ${value} occupy in memory?"`);
+    this.explanations.push(`${this.indent()}   Common: int=4, char=1, double=8, bool=1`);
+    this.explanations.push('');
   }
 
   private visitAddressOf(node: UnaryOpNode): void {
-    const varName = this.cleanName(node.operand);
-    this.explanations.push(`${this.indent()}📍 **Get Memory Address (&${varName})**`);
-    this.explanations.push(`${this.indent()}   Find where ${varName} lives in memory`);
-    this.explanations.push(`${this.indent()}   💡 Like getting someone's home address instead of visiting them`);
-    this.explanations.push("");
+    const v = this.cleanName(node.operand);
+    this.explanations.push(`${this.indent()}📍 **&${v}** — Get the memory address of '${v}'`);
+    this.explanations.push(`${this.indent()}   Like finding which shelf a book is on, not the book itself.`);
+    this.explanations.push('');
   }
 
   private visitDereference(node: UnaryOpNode): void {
-    const varName = this.cleanName(node.operand);
-    this.explanations.push(`${this.indent()}🎯 **Follow Pointer (*${varName})**`);
-    this.explanations.push(`${this.indent()}   Go to the address and get what's stored there`);
-    this.explanations.push(`${this.indent()}   💡 Like using an address to actually visit the house`);
-    this.explanations.push("");
-  }
-
-  private visitExpressionStatement(node: ExpressionStatementNode): void {
-    this.visit(node.expression);
+    const v = this.cleanName(node.operand);
+    this.explanations.push(`${this.indent()}🎯 **\*${v}** — Follow the pointer '${v}' to get the stored value`);
+    this.explanations.push(`${this.indent()}   Like going to the shelf address and reading the book.`);
+    this.explanations.push('');
   }
 
   // =========================================================================
@@ -457,37 +487,155 @@ export class Translator {
 
   private formatExpr(node: any): string {
     if (!node) return '???';
-    
+
     switch (node.type) {
-      case 'BinaryOp':
-        const left = this.formatExpr(node.left);
+      case 'BinaryOp': {
+        const left  = this.formatExpr(node.left);
         const right = this.formatExpr(node.right);
         return `(${left} ${node.operator} ${right})`;
-      
+      }
       case 'Identifier':
         return this.cleanName(node.name);
-      
       case 'Integer':
+        return String(node.value);
       case 'Float':
         return String(node.value);
-      
+      case 'Char':
+        return `'${node.value}'`;
       case 'String':
         return `"${node.value}"`;
-      
+      case 'Literal':
+        return String(node.value);
+      case 'ArrayAccess': {
+        const indices = (node.indices || []).map((i: any) => `[${this.formatExpr(i)}]`).join('');
+        return `${node.name}${indices}`;
+      }
       case 'VariableDecl':
         return this.cleanName(node.name);
-      
-      case 'ConditionalExpression':
-        const cond = this.formatExpr(node.condition);
+      case 'Assignment': {
+        const tgt = typeof node.target === 'string'
+          ? this.cleanName(node.target)
+          : this.formatExpr(node.target);
+        return `${tgt} ${node.operator} ${this.formatExpr(node.value)}`;
+      }
+      case 'ConditionalExpression': {
+        const cond    = this.formatExpr(node.condition);
         const trueVal = this.formatExpr(node.trueExpression);
         const falseVal = this.formatExpr(node.falseExpression);
         return `${cond} ? ${trueVal} : ${falseVal}`;
-      
-      case 'FunctionCall':
-        return `${node.name}(...)`;
-      
+      }
+      case 'FunctionCall': {
+        const args = (node.arguments || []).map((a: any) => this.formatExpr(a)).join(', ');
+        return `${node.name}(${args})`;
+      }
+      case 'CastExpression':
+        return `(${node.targetType})${this.formatExpr(node.operand)}`;
+      case 'SizeofExpression':
+        return `sizeof(${this.formatExpr(node.value)})`;
+      case 'NewExpression':
+        return node.size ? `new ${node.baseType}[${this.formatExpr(node.size)}]` : `new ${node.baseType}`;
+      case 'PreIncrement':
+        return `++${this.cleanName(node.operand)}`;
+      case 'PostIncrement':
+        return `${this.cleanName(node.operand)}++`;
+      case 'PreDecrement':
+        return `--${this.cleanName(node.operand)}`;
+      case 'PostDecrement':
+        return `${this.cleanName(node.operand)}--`;
+      case 'AddressOf':
+        return `&${this.formatExpr(node.operand)}`;
+      case 'Dereference':
+        return `*${this.formatExpr(node.operand)}`;
+      case 'UnaryOp':
+        return `${node.operator}${this.formatExpr(node.operand)}`;
+      case 'InitializerList': {
+        const vals = (node.values || []).map((v: any) => this.formatExpr(v)).join(', ');
+        return `{ ${vals} }`;
+      }
       default:
         return node.type || 'value';
     }
   }
+  // =========================================================================
+  //  RANGE-BASED FOR (C++11)
+  // =========================================================================
+  private visitRangeBasedFor(node: any): void {
+    const range = this.formatExpr(node.range);
+    this.explanations.push(
+      `${this.indent()}🔁 **Range-Based For Loop:** for each **'${node.name}'** (${node.varType}) in **${range}**`,
+    );
+    this.explanations.push(
+      `${this.indent()}   Automatically walks every element of the collection — no index needed.`,
+    );
+    this.explanations.push('');
+    this.indentLevel++;
+    (node.body || []).forEach((stmt: any) => this.visit(stmt));
+    this.indentLevel--;
+    this.explanations.push(`${this.indent()}   ↩️ Loop finished — all elements visited.`);
+    this.explanations.push('');
+  }
+
+  // =========================================================================
+  //  EXCEPTION HANDLING
+  // =========================================================================
+  private visitTryStatement(node: any): void {
+    this.explanations.push(`${this.indent()}🛡 **Try Block** — code that might throw an error:`);
+    this.explanations.push('');
+    this.indentLevel++;
+    (node.body || []).forEach((stmt: any) => this.visit(stmt));
+    this.indentLevel--;
+    (node.handlers || []).forEach((h: any) => {
+      const label = h.param?.type === 'CatchAll'
+        ? 'any exception'
+        : `${h.param?.varType ?? ''} ${h.param?.name ?? ''}`.trim();
+      this.explanations.push(`${this.indent()}🪤 **Catch (${label})** — runs if the try block throws:`);
+      this.explanations.push('');
+      this.indentLevel++;
+      (h.body || []).forEach((stmt: any) => this.visit(stmt));
+      this.indentLevel--;
+    });
+    this.explanations.push('');
+  }
+
+  private visitThrowStatement(node: any): void {
+    const val = node.value ? this.formatExpr(node.value) : '(rethrow)';
+    this.explanations.push(`${this.indent()}🚀 **Throw:** Signals an error with value: ${val}`);
+    this.explanations.push(`${this.indent()}   Execution jumps to the nearest matching catch block.`);
+    this.explanations.push('');
+  }
+
 }
+
+// ---------------------------------------------------------------------------
+// Lookup tables
+// ---------------------------------------------------------------------------
+
+const HEADER_DESCRIPTIONS: Record<string, string> = {
+  iostream:  'input/output (cin, cout)',
+  string:    'text handling',
+  cmath:     'math functions (pow, sqrt, etc.)',
+  iomanip:   'output formatting (setw, setprecision)',
+  vector:    'dynamic arrays',
+  algorithm: 'sorting and searching utilities',
+  fstream:   'file input/output',
+  cstdlib:   'general utilities (rand, exit)',
+  cstring:   'C-string manipulation',
+  ctime:     'date and time functions',
+  cassert:   'assertion checks',
+  sstream:   'string streams',
+};
+
+const COMPOUND_OP_LABELS: Record<string, string> = {
+  '=':   'Set',
+  '+=':  'Add & Update',
+  '-=':  'Subtract & Update',
+  '*=':  'Multiply & Update',
+  '/=':  'Divide & Update',
+  '%=':  'Modulo & Update',
+  '&=':  'Bitwise AND & Update',
+  '|=':  'Bitwise OR & Update',
+  '^=':  'Bitwise XOR & Update',
+  '<<=': 'Left-shift & Update',
+  '>>=': 'Right-shift & Update',
+
+};

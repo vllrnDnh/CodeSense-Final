@@ -7,8 +7,11 @@ import { LoginPage } from './Loginpage';
 import { SandboxPage } from './SandboxPage';
 import { LandingPage } from './Landingpage';
 import { ProgressPage } from './Progresspage'
+import { ProfileSettings } from './ProfileSettings';
+import { LeaderboardPage } from './LeaderboardPage';
+import { WelcomePage } from './WelcomePage';
 
-// Real ProtectedRoute logic using your AuthContext
+// Real ProtectedRoute logic that checks both authentication and guest status
 const ProtectedRoute: React.FC<{ children: React.ReactElement }> = ({ children }) => {
   const { isAuthenticated, isGuest } = useAuth();
   
@@ -57,12 +60,13 @@ export const App: React.FC = () => {
             } 
           />
 
-          {/* SAFETY NET: Prohibit navigation to unfinished features */}
           {/* These redirect back to /home so you stay logged in! */}
           <Route path="*" element={<Navigate to="/" replace />} />
           <Route path="/campaign" element={<Navigate to="/home" replace />} />
-          <Route path="/profile" element={<Navigate to="/home" replace />} />
+          <Route path="/profile" element={<ProfileSettings />} />
           <Route path="/settings" element={<Navigate to="/home" replace />} />
+          <Route path="/leaderboard" element={<LeaderboardPage />} />
+          <Route path="/welcome" element={<WelcomePage />} />
 
           {/* Fallback - Redirect to Landing */}
           <Route path="*" element={<Navigate to="/" replace />} />

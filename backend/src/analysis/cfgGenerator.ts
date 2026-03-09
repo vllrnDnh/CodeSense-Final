@@ -1,7 +1,7 @@
 /**
  * Control Flow Graph Generator
  * Implements the Sugiyama Framework for Hierarchical Graph Layout
- * Phase 3 (Output) - Step 1 of the analysis pipeline.
+ * Phase 3 (Output) — Step 1 of the analysis pipeline.
  */
 
 import {
@@ -13,15 +13,16 @@ import {
   FunctionDeclNode,
   ReturnStatementNode,
   BlockNode,
-  ControlFlowNode
+  ControlFlowNode,
+  SwitchStatementNode,
 } from '../types';
-import { Translator } from './translator'; // Import the Mentor Translator
+import { Translator } from './translator';
 
 interface GraphEdge {
   from: string;
   to: string;
   label?: string;
-  isReversed?: boolean; // For cycle breaking
+  isReversed?: boolean;
 }
 
 interface CFG {
@@ -33,7 +34,7 @@ export class CFGGenerator {
   private nodes: ControlFlowNode[] = [];
   private edges: GraphEdge[] = [];
   private currentNodeId = 0;
-  private mentor = new Translator(); // Initialize the tutor
+  private mentor = new Translator();
 
   generate(ast: ASTNode): CFG {
     this.nodes = [];
@@ -41,7 +42,7 @@ export class CFGGenerator {
     this.currentNodeId = 0;
 
     const startNode = this.createNode('start', 'Start');
-    const endNode = this.createNode('end', 'End');
+    const endNode   = this.createNode('end', 'End');
 
     this.visit(ast, startNode, endNode);
     this.applySugiyamaLayout();
@@ -50,7 +51,7 @@ export class CFGGenerator {
   }
 
   // =========================================================================
-  //  SUGIYAMA FRAMEWORK IMPLEMENTATION (Intact)
+  //  SUGIYAMA FRAMEWORK
   // =========================================================================
 
   private applySugiyamaLayout(): void {
@@ -90,16 +91,16 @@ export class CFGGenerator {
     let changed = true;
     let iterations = 0;
     while (changed && iterations < this.nodes.length + 2) {
-        changed = false;
-        this.edges.forEach(edge => {
-            const fromRank = ranks.get(edge.from) || 0;
-            const toRank = ranks.get(edge.to) || 0;
-            if (toRank <= fromRank) {
-                ranks.set(edge.to, fromRank + 1);
-                changed = true;
-            }
-        });
-        iterations++;
+      changed = false;
+      this.edges.forEach(edge => {
+        const fromRank = ranks.get(edge.from) || 0;
+        const toRank   = ranks.get(edge.to)   || 0;
+        if (toRank <= fromRank) {
+          ranks.set(edge.to, fromRank + 1);
+          changed = true;
+        }
+      });
+      iterations++;
     }
     ranks.forEach((rank, nodeId) => {
       if (!layers[rank]) layers[rank] = [];
@@ -111,65 +112,69 @@ export class CFGGenerator {
 
   private minimizeCrossings(layers: ControlFlowNode[][]): void {
     for (let i = 1; i < layers.length; i++) {
-        const currentLayer = layers[i];
-        const prevLayer = layers[i - 1];
-        const nodeWeights = currentLayer.map(node => {
-            const parents = this.edges
-                .filter(e => e.to === node.id && !e.isReversed)
-                .map(e => e.from);
-            if (parents.length === 0) return { node, weight: 0 };
-            let sumPositions = 0;
-            let count = 0;
-            parents.forEach(parentId => {
-                const index = prevLayer.findIndex(n => n.id === parentId);
-                if (index !== -1) {
-                    sumPositions += index;
-                    count++;
-                }
-            });
-            return { node, weight: count === 0 ? 0 : sumPositions / count };
+      const currentLayer = layers[i];
+      const prevLayer    = layers[i - 1];
+      const nodeWeights  = currentLayer.map(node => {
+        const parents = this.edges
+          .filter(e => e.to === node.id && !e.isReversed)
+          .map(e => e.from);
+        if (parents.length === 0) return { node, weight: 0 };
+        let sum = 0, count = 0;
+        parents.forEach(parentId => {
+          const idx = prevLayer.findIndex(n => n.id === parentId);
+          if (idx !== -1) { sum += idx; count++; }
         });
-        nodeWeights.sort((a, b) => a.weight - b.weight);
-        layers[i] = nodeWeights.map(nw => nw.node);
+        return { node, weight: count === 0 ? 0 : sum / count };
+      });
+      nodeWeights.sort((a, b) => a.weight - b.weight);
+      layers[i] = nodeWeights.map(nw => nw.node);
     }
   }
 
   private calculateCoordinates(layers: ControlFlowNode[][]): void {
-    const layerHeight = 100;
-    const nodeSpacing = 140;
-    const canvasWidth = 800;
+    const layerHeight  = 100;
+    const nodeSpacing  = 150;
+    const canvasWidth  = 900;
     layers.forEach((layer, layerIndex) => {
-        const layerWidth = layer.length * nodeSpacing;
-        const startX = (canvasWidth - layerWidth) / 2;
-        layer.forEach((node, index) => {
-            node.y = 50 + layerIndex * layerHeight;
-            node.x = startX + index * nodeSpacing;
-        });
+      const layerWidth = layer.length * nodeSpacing;
+      const startX     = (canvasWidth - layerWidth) / 2;
+      layer.forEach((node, index) => {
+        node.y = 50 + layerIndex * layerHeight;
+        node.x = startX + index * nodeSpacing;
+      });
     });
   }
 
   private restoreCycles(): void {
     this.edges.forEach(edge => {
-        if (edge.isReversed) {
-            const temp = edge.from;
-            edge.from = edge.to;
-            edge.to = temp;
-            delete edge.isReversed;
-        }
+      if (edge.isReversed) {
+        const temp = edge.from;
+        edge.from = edge.to;
+        edge.to = temp;
+        delete edge.isReversed;
+      }
     });
   }
 
   // =========================================================================
-  //  MODIFIED GRAPH CONSTRUCTION WITH TUTOR HOVER
+  //  GRAPH CONSTRUCTION
   // =========================================================================
 
-  private createNode(type: ControlFlowNode['type'], label: string, code?: string, line?: number, astNode?: ASTNode): ControlFlowNode {
-    // Generate the simple explanation for this specific block
-    let tutorExplanation = "";
+  private createNode(
+    type: ControlFlowNode['type'],
+    label: string,
+    code?: string,
+    line?: number,
+    astNode?: ASTNode,
+  ): ControlFlowNode {
+    let tutorExplanation = '';
     if (astNode) {
+      try {
         const lines = this.mentor.translate(astNode);
-        // Clean up formatting (removing emojis for simple hover display if needed)
-        tutorExplanation = lines.join(" ").replace(/\*\*/g, ""); 
+        tutorExplanation = lines.join(' ').replace(/\*\*/g, '');
+      } catch (_) {
+        // best-effort — never crash the CFG for a translation error
+      }
     }
 
     const node: ControlFlowNode = {
@@ -178,10 +183,10 @@ export class CFGGenerator {
       label,
       code,
       line,
-      tutorExplanation, // Attach to the node for frontend hover
+      tutorExplanation,
       children: [],
       x: 0,
-      y: 0
+      y: 0,
     };
     this.nodes.push(node);
     return node;
@@ -195,189 +200,435 @@ export class CFGGenerator {
   private visit(node: ASTNode, current: ControlFlowNode, exit: ControlFlowNode): ControlFlowNode {
     if (!node) return current;
 
-    // Explicitly handle I/O statements to satisfy the compiler and ensure execution
-    if (node.type === 'CoutStatement') {
-    return this.visitCoutStatement(node, current);
-    }
-    if (node.type === 'CinStatement') {
-    return this.visitCinStatement(node, current);
-    }
+    // Explicit type guards for stream statements (no method-name dispatch)
+    if (node.type === 'CoutStatement') return this.visitCoutStatement(node as any, current);
+    if (node.type === 'CinStatement')  return this.visitCinStatement(node as any, current);
 
     const methodName = `visit${node.type}`;
-    if ((this as any)[methodName]) {
-        return (this as any)[methodName](node, current, exit);
+    if (typeof (this as any)[methodName] === 'function') {
+      return (this as any)[methodName](node, current, exit);
     }
-    if ('body' in node) {
-        let lastNode = current;
-        (node as any).body.forEach((stmt: ASTNode) => {
-            lastNode = this.visit(stmt, lastNode, exit);
-        });
-        return lastNode;
+
+    // Fallback: iterate body/statements arrays
+    const anyNode = node as any;
+    let lastNode = current;
+    if (Array.isArray(anyNode.body)) {
+      anyNode.body.forEach((stmt: ASTNode) => {
+        lastNode = this.visit(stmt, lastNode, exit);
+      });
+    } else if (Array.isArray(anyNode.statements)) {
+      anyNode.statements.forEach((stmt: ASTNode) => {
+        lastNode = this.visit(stmt, lastNode, exit);
+      });
     }
-    return current;
+    return lastNode;
   }
 
+  // ── Program ───────────────────────────────────────────────────────────────
   private visitProgram(node: any, current: ControlFlowNode, exit: ControlFlowNode): ControlFlowNode {
     let lastNode = current;
-    node.body.forEach((stmt: ASTNode) => {
-        lastNode = this.visit(stmt, lastNode, exit);
+    (node.body || []).forEach((stmt: ASTNode) => {
+      lastNode = this.visit(stmt, lastNode, exit);
     });
     this.connect(lastNode, exit);
     return exit;
   }
 
-  private visitIfStatement(node: IfStatementNode, current: ControlFlowNode, exit: ControlFlowNode): ControlFlowNode {
-    const decision = this.createNode('decision', 'Condition', this.nodeToString(node.condition), node.line, node);
+  // ── If ────────────────────────────────────────────────────────────────────
+  private visitIfStatement(
+    node: IfStatementNode,
+    current: ControlFlowNode,
+    exit: ControlFlowNode,
+  ): ControlFlowNode {
+    const decision = this.createNode(
+      'decision', 'Condition', this.nodeToString(node.condition), node.line, node,
+    );
     const merge = this.createNode('process', 'Merge');
     this.connect(current, decision);
 
     let truePath = decision;
-    node.thenBranch.forEach(stmt => {
-        truePath = this.visit(stmt, truePath, merge);
+    (node.thenBranch || []).forEach(stmt => {
+      truePath = this.visit(stmt, truePath, merge);
     });
     this.connect(truePath, merge, 'True');
 
-    if (node.elseBranch) {
-        let falsePath = decision;
-        node.elseBranch.forEach(stmt => {
-            falsePath = this.visit(stmt, falsePath, merge);
-        });
-        this.connect(falsePath, merge, 'False');
+    if (node.elseBranch && node.elseBranch.length > 0) {
+      let falsePath = decision;
+      node.elseBranch.forEach(stmt => {
+        falsePath = this.visit(stmt, falsePath, merge);
+      });
+      this.connect(falsePath, merge, 'False');
     } else {
-        this.connect(decision, merge, 'False');
+      this.connect(decision, merge, 'False');
     }
     return merge;
   }
 
-  private visitCoutStatement(node: any, current: ControlFlowNode): ControlFlowNode {
-    // Pass 'node' as the 5th argument so the Mentor Translator can read it
-    const step = this.createNode('process', 'Output (cout)', 'cout << ...', node.line, node);
-    this.connect(current, step);
-    return step;
-}
+  // ── Switch ────────────────────────────────────────────────────────────────
+  private visitSwitchStatement(
+    node: SwitchStatementNode,
+    current: ControlFlowNode,
+    exit: ControlFlowNode,
+  ): ControlFlowNode {
+    const switchNode = this.createNode(
+      'decision', 'Switch', this.nodeToString(node.condition), (node as any).line, node,
+    );
+    this.connect(current, switchNode);
 
-private visitCinStatement(node: any, current: ControlFlowNode): ControlFlowNode {
-    // Create the node and pass 'node' so the translator can extract the targets
-    const step = this.createNode('process', 'Input (cin)', 'cin >> ...', node.line, node);
-    this.connect(current, step);
-    return step;
-}
+    const merge = this.createNode('process', 'End Switch');
+    let prevDecision = switchNode;
 
-  private visitDoWhileLoop(node: DoWhileLoopNode, current: ControlFlowNode, exit: ControlFlowNode): ControlFlowNode {
-    const loopStart = this.createNode('process', 'Do-While Start', '', node.line, node);
-    this.connect(current, loopStart);
-    let bodyNode = loopStart;
-    node.body.forEach(stmt => {
-        bodyNode = this.visit(stmt, bodyNode, exit); 
+    (node.cases || []).forEach((caseNode: any, i: number) => {
+      const caseLabel = caseNode.value
+        ? `Case ${this.nodeToString(caseNode.value)}`
+        : 'Default';
+      const caseDecision = this.createNode('decision', caseLabel);
+      this.connect(prevDecision, caseDecision, i === 0 ? undefined : 'else');
+
+      let casePath: ControlFlowNode = caseDecision;
+      (caseNode.statements || []).forEach((stmt: ASTNode) => {
+        casePath = this.visit(stmt, casePath, merge);
+      });
+      this.connect(casePath, merge, 'break');
+      prevDecision = caseDecision;
     });
-    const decision = this.createNode('decision', 'Condition', this.nodeToString(node.condition), node.line, node);
-    this.connect(bodyNode, decision);
-    this.connect(decision, loopStart, 'True');
-    const afterLoop = this.createNode('process', 'Exit Loop');
-    this.connect(decision, afterLoop, 'False');
-    return afterLoop;
+
+    // Last case's "no match" edge goes to merge (default fallthrough)
+    this.connect(prevDecision, merge, 'else');
+    return merge;
   }
 
-  private visitWhileLoop(node: WhileLoopNode, current: ControlFlowNode, exit: ControlFlowNode): ControlFlowNode {
-    const decision = this.createNode('decision', 'While Loop', this.nodeToString(node.condition), node.line, node);
+  // ── While ─────────────────────────────────────────────────────────────────
+  private visitWhileLoop(
+    node: WhileLoopNode,
+    current: ControlFlowNode,
+    exit: ControlFlowNode,
+  ): ControlFlowNode {
+    const decision = this.createNode(
+      'decision', 'While Loop', this.nodeToString(node.condition), (node as any).line, node,
+    );
     this.connect(current, decision);
+
     let bodyNode = decision;
-    node.body.forEach(stmt => {
-        bodyNode = this.visit(stmt, bodyNode, decision);
+    (node.body || []).forEach(stmt => {
+      bodyNode = this.visit(stmt, bodyNode, decision);
     });
     this.connect(bodyNode, decision, 'Loop');
+
     const afterLoop = this.createNode('process', 'Exit Loop');
     this.connect(decision, afterLoop, 'False');
     return afterLoop;
   }
 
-  private visitForLoop(node: ForLoopNode, current: ControlFlowNode, exit: ControlFlowNode): ControlFlowNode {
+  // ── Do-While ──────────────────────────────────────────────────────────────
+  private visitDoWhileLoop(
+    node: DoWhileLoopNode,
+    current: ControlFlowNode,
+    exit: ControlFlowNode,
+  ): ControlFlowNode {
+    const loopStart = this.createNode('process', 'Do-While Body', '', (node as any).line, node);
+    this.connect(current, loopStart);
+
+    let bodyNode = loopStart;
+    (node.body || []).forEach(stmt => {
+      bodyNode = this.visit(stmt, bodyNode, exit);
+    });
+
+    const decision = this.createNode(
+      'decision', 'Condition', this.nodeToString(node.condition), (node as any).line,
+    );
+    this.connect(bodyNode, decision);
+    this.connect(decision, loopStart, 'True');
+
+    const afterLoop = this.createNode('process', 'Exit Loop');
+    this.connect(decision, afterLoop, 'False');
+    return afterLoop;
+  }
+
+  // ── For ───────────────────────────────────────────────────────────────────
+  private visitForLoop(
+    node: ForLoopNode,
+    current: ControlFlowNode,
+    exit: ControlFlowNode,
+  ): ControlFlowNode {
     let lastNode = current;
     if (node.init) {
-        const initNode = this.createNode('process', 'Init', this.nodeToString(node.init), undefined, node.init);
-        this.connect(lastNode, initNode);
-        lastNode = initNode;
+      const initNode = this.createNode(
+        'process', 'Init', this.nodeToString(node.init), undefined, node.init as any,
+      );
+      this.connect(lastNode, initNode);
+      lastNode = initNode;
     }
-    const decision = this.createNode('decision', 'For Condition', node.condition ? this.nodeToString(node.condition) : 'true', node.line, node);
+
+    const decision = this.createNode(
+      'decision', 'For Condition',
+      node.condition ? this.nodeToString(node.condition) : 'true',
+      (node as any).line, node,
+    );
     this.connect(lastNode, decision);
+
     let bodyNode = decision;
-    node.body.forEach(stmt => {
-        bodyNode = this.visit(stmt, bodyNode, decision);
+    (node.body || []).forEach(stmt => {
+      bodyNode = this.visit(stmt, bodyNode, decision);
     });
+
     if (node.update) {
-        const updateNode = this.createNode('process', 'Update', this.nodeToString(node.update));
-        this.connect(bodyNode, updateNode);
-        this.connect(updateNode, decision, 'Loop');
+      const updateNode = this.createNode('process', 'Update', this.nodeToString(node.update));
+      this.connect(bodyNode, updateNode);
+      this.connect(updateNode, decision, 'Loop');
     } else {
-        this.connect(bodyNode, decision, 'Loop');
+      this.connect(bodyNode, decision, 'Loop');
     }
+
     const afterLoop = this.createNode('process', 'Exit Loop');
     this.connect(decision, afterLoop, 'False');
     return afterLoop;
   }
 
+  // ── Variable / Assignment ─────────────────────────────────────────────────
   private visitVariableDecl(node: any, current: ControlFlowNode): ControlFlowNode {
-    const step = this.createNode('process', 'Declare', `${node.varType} ${node.name}`, node.line, node);
+    const step = this.createNode(
+      'process', 'Declare',
+      `${node.varType} ${node.name}${node.value ? ' = ...' : ''}`,
+      node.line, node,
+    );
     this.connect(current, step);
     return step;
   }
 
   private visitAssignment(node: any, current: ControlFlowNode): ControlFlowNode {
-    const step = this.createNode('process', 'Assign', `${node.target} = ...`, node.line, node);
+    const target = typeof node.target === 'string'
+      ? node.target
+      : this.nodeToString(node.target);
+    const step = this.createNode('process', 'Assign', `${target} ${node.operator} ...`, node.line, node);
     this.connect(current, step);
     return step;
   }
 
-  private visitExpressionStatement(node: any, current: ControlFlowNode): ControlFlowNode {
+  // ── Expressions ──────────────────────────────────────────────────────────
+  private visitExpressionStatement(node: any, current: ControlFlowNode, exit: ControlFlowNode): ControlFlowNode {
     const code = this.nodeToString(node.expression);
     const step = this.createNode('process', 'Expression', code, node.line, node.expression);
     this.connect(current, step);
     return step;
   }
 
-  private visitFunctionDecl(node: FunctionDeclNode, current: ControlFlowNode, exit: ControlFlowNode): ControlFlowNode {
-      const funcStart = this.createNode('start', `Func: ${node.name}`, '', node.line, node);
-      this.connect(current, funcStart);
-      let lastNode = funcStart;
-      
-      // Handle function prototypes (body is null) vs full definitions (body is array)
-      if (node.body && Array.isArray(node.body)) {
-          node.body.forEach(stmt => {
-              lastNode = this.visit(stmt, lastNode, exit);
-          });
-      }
-      
-      return lastNode;
+  private visitFunctionCall(node: any, current: ControlFlowNode): ControlFlowNode {
+    const step = this.createNode('process', `Call: ${node.name}`, `${node.name}(...)`, node.line, node);
+    this.connect(current, step);
+    return step;
   }
 
-  private visitFunctionPrototype(node: any, current: ControlFlowNode, exit: ControlFlowNode): ControlFlowNode {
-      // Function prototypes are forward declarations - they don't have executable code
-      // Just create a simple node to document the prototype and move on
-      const protoNode = this.createNode('process', `Prototype: ${node.name}`, `${node.returnType} ${node.name}(...)`, node.line, node);
-      this.connect(current, protoNode);
-      return protoNode;
+  // ── I/O ───────────────────────────────────────────────────────────────────
+  private visitCoutStatement(node: any, current: ControlFlowNode): ControlFlowNode {
+    const step = this.createNode('output', 'Output (cout)', 'cout << ...', node.line, node);
+    this.connect(current, step);
+    return step;
   }
 
-  private visitReturnStatement(node: ReturnStatementNode, current: ControlFlowNode, exit: ControlFlowNode): ControlFlowNode {
-      const ret = this.createNode('end', 'Return', '', node.line, node);
-      this.connect(current, ret);
-      this.connect(ret, exit); 
-      return ret;
+  private visitCinStatement(node: any, current: ControlFlowNode): ControlFlowNode {
+    const step = this.createNode('input', 'Input (cin)', 'cin >> ...', node.line, node);
+    this.connect(current, step);
+    return step;
   }
 
-  private visitBlock(node: BlockNode, current: ControlFlowNode, exit: ControlFlowNode): ControlFlowNode {
-      let lastNode = current;
-      node.statements.forEach(stmt => {
-          lastNode = this.visit(stmt, lastNode, exit);
+  // ── Functions ─────────────────────────────────────────────────────────────
+  private visitFunctionDecl(
+    node: FunctionDeclNode,
+    current: ControlFlowNode,
+    exit: ControlFlowNode,
+  ): ControlFlowNode {
+    const funcStart = this.createNode('start', `Func: ${node.name}`, `${(node as any).returnType} ${node.name}(...)`, (node as any).line, node);
+    const funcEnd   = this.createNode('end',   `End: ${node.name}`);
+
+    // Functions are self-contained — connect program flow around them
+    // but also build their internal graph from funcStart → funcEnd
+    this.connect(current, funcStart);
+    let lastNode = funcStart;
+    if (Array.isArray(node.body)) {
+      node.body.forEach(stmt => {
+        lastNode = this.visit(stmt, lastNode, funcEnd);
       });
-      return lastNode;
+    }
+    // If the function body doesn't explicitly return, connect to funcEnd
+    if (lastNode !== funcEnd) {
+      this.connect(lastNode, funcEnd);
+    }
+    return funcEnd;
   }
+
+  private visitFunctionPrototype(node: any, current: ControlFlowNode): ControlFlowNode {
+    const protoNode = this.createNode(
+      'process', `Prototype: ${node.name}`,
+      `${node.returnType} ${node.name}(...)`, node.line, node,
+    );
+    this.connect(current, protoNode);
+    return protoNode;
+  }
+
+  private visitReturnStatement(
+    node: ReturnStatementNode,
+    current: ControlFlowNode,
+    exit: ControlFlowNode,
+  ): ControlFlowNode {
+    const ret = this.createNode('end', 'Return', '', (node as any).line, node);
+    this.connect(current, ret);
+    this.connect(ret, exit);
+    return ret;
+  }
+
+  private visitBlock(
+    node: BlockNode,
+    current: ControlFlowNode,
+    exit: ControlFlowNode,
+  ): ControlFlowNode {
+    let lastNode = current;
+    (node.statements || []).forEach(stmt => {
+      lastNode = this.visit(stmt, lastNode, exit);
+    });
+    return lastNode;
+  }
+
+  // ── Loop Control ─────────────────────────────────────────────────────────
+  private visitLoopControl(node: any, current: ControlFlowNode, exit: ControlFlowNode): ControlFlowNode {
+    const label = node.value === 'break' ? '🛑 Break' : '⏭️ Continue';
+    const step = this.createNode('process', label, node.value, node.line);
+    this.connect(current, step);
+    // For break, connect to exit so the graph reflects the jump
+    if (node.value === 'break') {
+      this.connect(step, exit, 'break');
+    }
+    return step;
+  }
+
+  // ── Range-Based For ──────────────────────────────────────────────────────
+  private visitRangeBasedFor(
+    node: any,
+    current: ControlFlowNode,
+    exit: ControlFlowNode,
+  ): ControlFlowNode {
+    const loopNode = this.createNode(
+      'decision',
+      `For-each: ${node.name} in ${this.nodeToString(node.range)}`,
+      `for (${node.varType} ${node.name} : ...)`,
+      node.line,
+      node,
+    );
+    this.connect(current, loopNode);
+    let bodyNode = loopNode;
+    (node.body || []).forEach((stmt: ASTNode) => {
+      bodyNode = this.visit(stmt, bodyNode, loopNode);
+    });
+    this.connect(bodyNode, loopNode, 'Next');
+    const afterLoop = this.createNode('process', 'Exit Range-For');
+    this.connect(loopNode, afterLoop, 'Done');
+    return afterLoop;
+  }
+
+  // ── Try / Catch ───────────────────────────────────────────────────────────
+  private visitTryStatement(
+    node: any,
+    current: ControlFlowNode,
+    exit: ControlFlowNode,
+  ): ControlFlowNode {
+    const tryStart = this.createNode('process', '🛡 Try Block', 'try {', node.line, node);
+    this.connect(current, tryStart);
+
+    let lastTry = tryStart;
+    (node.body || []).forEach((stmt: ASTNode) => {
+      lastTry = this.visit(stmt, lastTry, exit);
+    });
+
+    const merge = this.createNode('process', 'After Try-Catch');
+    this.connect(lastTry, merge);
+
+    (node.handlers || []).forEach((handler: any) => {
+      const paramLabel = handler.param?.type === 'CatchAll'
+        ? 'catch(...)'
+        : `catch(${handler.param?.varType ?? ''} ${handler.param?.name ?? ''})`;
+      const catchNode = this.createNode('decision', `⚠️ ${paramLabel}`, paramLabel, handler.line, handler);
+      // Exception edge from try block to catch handler
+      this.connect(tryStart, catchNode, 'exception');
+      let lastCatch = catchNode;
+      (handler.body || []).forEach((stmt: ASTNode) => {
+        lastCatch = this.visit(stmt, lastCatch, exit);
+      });
+      this.connect(lastCatch, merge);
+    });
+
+    return merge;
+  }
+
+  private visitThrowStatement(
+    node: any,
+    current: ControlFlowNode,
+    exit: ControlFlowNode,
+  ): ControlFlowNode {
+    const throwNode = this.createNode('end', '🚀 Throw', 'throw ...', node.line, node);
+    this.connect(current, throwNode);
+    this.connect(throwNode, exit, 'throw');
+    return throwNode;
+  }
+
+  // ── CP2: Dynamic Memory ───────────────────────────────────────────────────
+  private visitNewExpression(node: any, current: ControlFlowNode): ControlFlowNode {
+    const label = node.size
+      ? `Alloc: new ${node.baseType}[...]`
+      : `Alloc: new ${node.baseType}`;
+    const step = this.createNode('process', label, label, node.line, node);
+    this.connect(current, step);
+    return step;
+  }
+
+  private visitDeleteStatement(node: any, current: ControlFlowNode): ControlFlowNode {
+    const label = node.isArray ? `Free: delete[] ${node.target}` : `Free: delete ${node.target}`;
+    const step = this.createNode('process', label, label, node.line, node);
+    this.connect(current, step);
+    return step;
+  }
+
+  // =========================================================================
+  //  NODE TO STRING
+  // =========================================================================
 
   private nodeToString(node: any): string {
-      if (!node) return '';
-      if (node.name) return node.name;
-      if (node.value) return String(node.value);
-      if (node.type === 'BinaryOp') return `${this.nodeToString(node.left)} ${node.operator} ${this.nodeToString(node.right)}`;
-      return node.type;
+    if (!node) return '';
+    if (typeof node === 'string') return node;
+
+    switch (node.type) {
+      case 'Identifier':    return node.name || '';
+      case 'Integer':
+      case 'Float':
+      case 'Literal':       return String(node.value);
+      case 'Char':          return `'${node.value}'`;
+      case 'String':        return `"${node.value}"`;
+      case 'BinaryOp':
+        return `${this.nodeToString(node.left)} ${node.operator} ${this.nodeToString(node.right)}`;
+      case 'UnaryOp':
+        return `${node.operator}${this.nodeToString(node.operand)}`;
+      case 'PreIncrement':  return `++${this.nodeToString(node.operand)}`;
+      case 'PostIncrement': return `${this.nodeToString(node.operand)}++`;
+      case 'PreDecrement':  return `--${this.nodeToString(node.operand)}`;
+      case 'PostDecrement': return `${this.nodeToString(node.operand)}--`;
+      case 'AddressOf':     return `&${this.nodeToString(node.operand)}`;
+      case 'Dereference':   return `*${this.nodeToString(node.operand)}`;
+      case 'ArrayAccess': {
+        const indices = (node.indices || []).map((i: any) => `[${this.nodeToString(i)}]`).join('');
+        return `${node.name}${indices}`;
+      }
+      case 'Assignment':
+        return `${this.nodeToString(node.target)} ${node.operator} ${this.nodeToString(node.value)}`;
+      case 'FunctionCall':  return `${node.name}(...)`;
+      case 'CastExpression': return `(${node.targetType})${this.nodeToString(node.operand)}`;
+      case 'SizeofExpression': return `sizeof(${this.nodeToString(node.value)})`;
+      case 'ConditionalExpression':
+        return `${this.nodeToString(node.condition)} ? ... : ...`;
+      case 'NewExpression':
+        return node.size ? `new ${node.baseType}[...]` : `new ${node.baseType}`;
+      case 'VariableDecl':  return `${node.varType} ${node.name}`;
+      case 'ExpressionStatement': return this.nodeToString(node.expression);
+      default:
+        return node.name || node.value !== undefined ? String(node.value) : node.type;
+    }
   }
 }

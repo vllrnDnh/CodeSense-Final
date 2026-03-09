@@ -1,8 +1,5 @@
 /* ============================================================
    CodeSense Sandbox — layout.css
-   Design direction: "Technical Blueprint" — crisp, readable,
-   high-contrast dark IDE aesthetic with clear zone hierarchy.
-   Font: IBM Plex Mono for code feel, IBM Plex Sans for UI.
    ============================================================ */
 
 @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap');
@@ -46,7 +43,7 @@ html, body, #root {
   background: var(--bg-void);
   font-family: 'IBM Plex Sans', 'Segoe UI', system-ui, sans-serif;
   color: var(--text-primary);
-  overflow: hidden; /* the inner columns scroll, not the page */
+  overflow: hidden; 
   -webkit-font-smoothing: antialiased;
 }
 
@@ -158,8 +155,8 @@ html, body, #root {
   min-height: 0;
 }
 
-.editor-section { flex: 2.2; min-height: 0; }
-.tabs-section   { flex: 1; min-height: 240px; }
+.editor-section { flex: 1.4; min-height: 0; }
+.tabs-section   { flex: 1;   min-height: 320px; }
 
 /* ── Section title bar ──────────────────────────────────── */
 .section-title {

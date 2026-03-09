@@ -3,7 +3,7 @@ import { tokenize } from '../analysis/lexer';
 import { TypeChecker } from '../analysis/typechecker';
 import { SymbolicExecutor } from '../analysis/symbolicexe';
 import { CFGGenerator } from '../analysis/cfgGenerator';
-import { CognitiveComplexity } from '../analysis/scoring';
+import { CognitiveComplexity, CyclomaticComplexity } from '../analysis/scoring';
 import type { AnalysisResult, AnalysisError } from '../types';
 import { Translator } from '../analysis/translator';
 import { GameEngine } from '../gamification/GameEngine';
@@ -11,249 +11,346 @@ import { GameEngine } from '../gamification/GameEngine';
 const parser = require('../analysis/parser');
 const router = Router();
 
+// ---------------------------------------------------------------------------
+// Known stdlib identifiers that produce noisy "unused" warnings we suppress
+// ---------------------------------------------------------------------------
+const STD_LIB_SYMBOLS = [
+  'cout', 'cin', 'endl', 'cerr', 'clog', 'string',
+  'setw', 'setprecision', 'fixed', 'showpoint', 'left', 'right',
+  'boolalpha', 'noboolalpha', 'getline',
+  'pow', 'sqrt', 'abs', 'fabs', 'ceil', 'floor', 'round',
+  'stoi', 'stod', 'stof', 'stol', 'stoul', 'to_string',
+  'ifstream', 'ofstream', 'fstream',
+];
+
 router.post('/analyze', (req, res) => {
-    const { sourceCode } = req.body;
-    console.log("\n--- [DEBUG] New Analysis Request ---");
-    console.log("Source Snippet:", sourceCode.substring(0, 50).replace(/\n/g, ' '));
-    
-    // PHASE 1: Lexical Analysis
-    const lexResult = tokenize(sourceCode);
-    let ast: any = null;
+  const { sourceCode, hintsUsed = 0 } = req.body;
 
-    try {
-        if (lexResult.errors.length > 0) {
-            console.log("❌ Lexical Errors Found:", lexResult.errors.length);
-            return res.status(200).json({
-                success: false,
-                tokens: lexResult.tokens,
-                ast: null,
-                symbolTable: {},
-                errors: lexResult.errors.map(err => ({ ...err, type: 'lexical', severity: 'error' })),
-                warnings: [],
-                cognitiveComplexity: 0,
-                safetyChecks: [],
-                cfg: { nodes: [], edges: [] },
-                symbolicExecution: [],
-                explanations: ["❌ **Status:** Lexical Analysis Failed."]
-            });
-        }
+  if (!sourceCode || typeof sourceCode !== 'string') {
+    return res.status(400).json({
+      success: false,
+      errors: [{ type: 'semantic', severity: 'error', message: 'No source code provided.', line: 0 }],
+      explanations: ['❌ **Status:** No source code received.'],
+      tokens: [], ast: null, safetyChecks: [], cfg: { nodes: [], edges: [] },
+      cognitiveComplexity: 0, symbolicExecution: [],
+      gamification: { xpEarned: 0, qualityBonus: 0 },
+    });
+  }
 
-        // PHASE 2: Syntactic Analysis
-        ast = parser.parse(sourceCode);
-        
-        // ====================================================================
-        // STRICT C++ DEPENDENCY VALIDATION
-        // ====================================================================
-        const usesCout = /\bcout\b/.test(sourceCode);
-        const usesCin = /\bcin\b/.test(sourceCode);
-        const usesExplicitStd = sourceCode.includes('std::');
-        const requiresIostream = usesCout || usesCin || usesExplicitStd;
+  console.log('\n--- [DEBUG] New Analysis Request ---');
+  console.log('Source Snippet:', sourceCode.substring(0, 60).replace(/\n/g, ' '));
 
-        const hasIostreamInclude = ast.directives && ast.directives.some((d: any) => d.type === 'Include' && d.name === 'iostream');
-        const hasStdNamespace = ast.namespace && ast.namespace.name === 'std';
+  // ─── PHASE 1: Lexical Analysis ─────────────────────────────────────────────
+  const lexResult = tokenize(sourceCode);
 
-        console.log("--- Dependency Check ---");
-        console.log("Requires Iostream:", requiresIostream);
-        console.log("Has #include <iostream>:", hasIostreamInclude);
-        console.log("Has namespace std:", hasStdNamespace);
-        console.log("Uses std:: explicit:", usesExplicitStd);
+  if (lexResult.errors.length > 0) {
+    return res.status(200).json({
+      success: false,
+      tokens: lexResult.tokens,
+      errors: lexResult.errors.map(err => ({
+        ...err, type: 'lexical', severity: 'error',
+      })),
+      ast: null,
+      safetyChecks: [],
+      cfg: { nodes: [], edges: [] },
+      cognitiveComplexity: 0,
+      gamification: { xpEarned: 0, qualityBonus: 0 },
+      symbolicExecution: [],
+      explanations: [
+        '❌ **Status:** Lexical Analysis Failed.',
+        ...lexResult.errors.map(e => `🔤 **Lexical Error (L${e.line}:C${e.column}):** ${e.message}`),
+      ],
+    });
+  }
 
-        const strictErrors: AnalysisError[] = [];
+  // ─── PHASE 2: Syntactic Analysis ──────────────────────────────────────────
+  let ast: any = null;
+  try {
+    ast = parser.parse(sourceCode);
+  } catch (syntaxErr: any) {
+    return res.status(200).json({
+      success: false,
+      tokens: lexResult.tokens,
+      ast: null,
+      errors: [{
+        type: 'syntactic',
+        message: syntaxErr.message,
+        line: syntaxErr.location?.start.line || 1,
+        column: syntaxErr.location?.start.column || 1,
+        severity: 'error',
+      }],
+      safetyChecks: [],
+      cfg: { nodes: [], edges: [] },
+      cognitiveComplexity: 0,
+      gamification: { xpEarned: 0, qualityBonus: 0 },
+      symbolicExecution: [],
+      explanations: [
+        `❌ **Status:** Syntax Error Detected`,
+        `🔧 **Line ${syntaxErr.location?.start.line || '?'}:** ${syntaxErr.message}`,
+      ],
+    });
+  }
 
-        if (requiresIostream) {
-            if (!hasIostreamInclude) {
-                strictErrors.push({
-                    type: 'semantic',
-                    severity: 'error',
-                    message: "Strict Error: 'cout/cin' requires '#include <iostream>'",
-                    line: 1, column: 1
-                });
-            }
-            if (!usesExplicitStd && !hasStdNamespace && (usesCout || usesCin)) {
-                strictErrors.push({
-                    type: 'semantic',
-                    severity: 'error',
-                    message: "Strict Error: 'cout/cin' requires 'using namespace std;'",
-                    line: 2, column: 1
-                });
-            }
-        }
+  try {
+    // ─── PHASE 3: Dependency Validation (FEU CP1/CP2 Strict Rules) ──────────
+    const usesIo = /\b(cout|cin|endl|cerr)\b/.test(sourceCode);
+    const usesStdPrefix = /\bstd::/.test(sourceCode);
+    const hasUsingStd = ast.namespace?.name === 'std' || usesStdPrefix;
 
-        if (strictErrors.length > 0) {
-            console.log("🚨 Strict Errors Found:", strictErrors.map(e => e.message));
-            return res.status(200).json({
-                success: false,
-                tokens: lexResult.tokens,
-                ast: ast,
-                symbolTable: {},
-                safetyChecks: [],
-                cfg: { nodes: [], edges: [] },
-                symbolicExecution: [],
-                cognitiveComplexity: 0,
-                explanations: ["❌ **Status:** Strict Dependency Check Failed."],
-                errors: strictErrors.map(err => ({ ...err, type: 'semantic' })),
-                warnings: []
-            });
-        }
+    // Helper: check if a header is in the directive list
+    const hasHeader = (name: string) =>
+      ast.directives?.some((d: any) => d.type === 'Include' && d.name === name);
 
-        // PHASE 3: Semantic Analysis (ENHANCED)
-        console.log("--- Semantic Phase ---");
-        const typeChecker = new TypeChecker();
-        const typeResult = typeChecker.check(ast);
-        
-        const semanticErrors = typeResult.errors.filter(e => e.severity === 'error');
-        
-        // ====================================================================
-        // FILTER OUT STANDARD LIBRARY FALSE POSITIVES
-        // ====================================================================
-        const stdLibSymbols = ['cout', 'cin', 'endl', 'string', 'cerr', 'clog'];
-        const semanticWarnings = typeResult.errors
-            .filter(e => e.severity === 'warning')
-            .filter(w => {
-                // Filter out warnings about unused standard library symbols
-                const isStdLibWarning = stdLibSymbols.some(symbol => 
-                    w.message.includes(`'${symbol}'`) && w.message.toLowerCase().includes('unused')
-                );
-                return !isStdLibWarning;
-            });
-        
-        console.log("Semantic Errors:", semanticErrors.length);
-        console.log("Semantic Warnings (filtered):", semanticWarnings.length);
-        
-        if (semanticWarnings.length > 0) {
-            console.log("⚠️ Warning Details:", semanticWarnings.map(w => w.message));
-        }
-        
-        if (semanticErrors.length > 0) {
-            console.log("❌ Semantic Errors:", semanticErrors.length);
-            return res.status(200).json({
-                success: false,
-                tokens: lexResult.tokens,
-                ast: ast,
-                symbolTable: typeResult.symbolTable,
-                safetyChecks: [],
-                cfg: { nodes: [], edges: [] },
-                symbolicExecution: [],
-                cognitiveComplexity: 0,
-                explanations: [
-                    "❌ **Status:** Semantic Analysis Failed",
-                    ...semanticErrors.map(e => `🚨 **Error (Line ${e.line}):** ${e.message}`),
-                    ...semanticWarnings.map(w => `⚠️ **Warning (Line ${w.line}):** ${w.message}`)
-                ],
-                errors: semanticErrors,
-                warnings: semanticWarnings
-            });
-        }
+    const depErrors: AnalysisError[] = [];
 
-        // PHASE 4: Logic, Safety, and Control Flow
-        console.log("--- Logic & Safety Phase ---");
-        
-        // Symbolic Execution
-        const executor = new SymbolicExecutor(typeResult.symbolTable);
-        const safetyChecks = executor.execute(ast);
-        
-        // Generate Control Flow Graph
-        const cfgGenerator = new CFGGenerator();
-        const cfg = cfgGenerator.generate(ast);
-        console.log("✅ CFG Generated with", cfg.nodes?.length || 0, "nodes");
-        
-        // Generate Mentor Explanations
-        const translator = new Translator();
-        const mentorExplanations = translator.translate(ast);
-
-        // ====================================================================
-        // GENERATE SUMMARY ADVICE (The Solution Tip)
-        // ====================================================================
-        let summaryAdvice: string[] = [];
-        
-        if (semanticWarnings.length > 0) {
-            summaryAdvice.push("---");
-            summaryAdvice.push("💡 **Mentor's Final Advice:**");
-            
-            const hasUnused = semanticWarnings.some(w => w.message.toLowerCase().includes('unused'));
-            const hasRedundant = semanticWarnings.some(w => w.message.toLowerCase().includes('redundant'));
-
-            if (hasUnused) {
-                summaryAdvice.push("➜ I found variables that aren't being used. Removing them will make your code cleaner!");
-            }
-            if (hasRedundant) {
-                summaryAdvice.push("➜ Be careful with assignments! Some values are being overwritten before they are ever read.");
-            }
-        }
-
-        // ====================================================================
-        // MERGED SEMANTIC WARNINGS INTO LOGS
-        // ====================================================================
-        const warningExplanations = semanticWarnings.map(w => 
-            `⚠️ **WARNING (Line ${w.line}):** ${w.message}`
-        );
-
-        // Prepend warnings so they appear at the top of the Logs tab
-        const finalExplanations = [
-            ...warningExplanations, 
-            ...mentorExplanations,
-            ...summaryAdvice
-        ];
-        
-        // Calculate Complexity Score
-        const scorer = new CognitiveComplexity();
-        const score = scorer.calculate(ast);
-        
-        // Gamification Rewards
-        const gameEngine = new GameEngine();
-        const reward = gameEngine.calculateReward({ 
-            cognitiveComplexity: score, 
-            errors: [], 
-            safetyChecks: safetyChecks 
-        } as any, req.body.hintsUsed || 0);
-
-        // COMPLETE RESPONSE
-        console.log("✅ Analysis Complete - Success!");
-        console.log("📊 Final Stats: Errors=0, Warnings=" + semanticWarnings.length);
-        
-        res.json({
-            success: true,
-            tokens: lexResult.tokens,
-            ast: ast,
-            symbolTable: typeResult.symbolTable,
-            safetyChecks: safetyChecks,
-            cfg: cfg,
-            symbolicExecution: [], 
-            cognitiveComplexity: score,
-            explanations: finalExplanations, // Updated to include warnings
-            gamification: {
-                xpEarned: reward.xp,
-                qualityBonus: reward.bonus,
-                levelTitle: gameEngine.getLevelTitle(Math.floor(reward.xp / 100) + 1)
-            },
-            errors: [], 
-            warnings: semanticWarnings 
-        });
-
-    } catch (e: any) {
-        console.log("🔥 Syntax/Runtime Crash:", e.message);
-        const syntaxError: AnalysisError = {
-            type: 'syntactic',
-            message: e.message,
-            line: e.location?.start.line || 1,
-            column: e.location?.start.column || 1,
-            severity: 'error'
-        };
-
-        res.status(200).json({
-            success: false,
-            tokens: lexResult.tokens,
-            ast: null,
-            symbolTable: {},
-            errors: [syntaxError],
-            warnings: [],
-            cognitiveComplexity: 0,
-            safetyChecks: [],
-            cfg: { nodes: [], edges: [] },
-            symbolicExecution: [],
-            explanations: [`❌ **Status:** Syntax Error Detected - ${e.message}`]
-        });
+    // iostream
+    if (usesIo && !hasHeader('iostream')) {
+      depErrors.push({
+        type: 'semantic', severity: 'error',
+        message: "Strict Error: 'cout/cin/cerr' requires '#include <iostream>'",
+        line: 1, column: 1,
+      });
     }
+    if (usesIo && !hasUsingStd) {
+      depErrors.push({
+        type: 'semantic', severity: 'error',
+        message: "Strict Error: 'cout/cin/cerr' requires 'using namespace std;' (or 'std::' prefix)",
+        line: 2, column: 1,
+      });
+    }
+
+    // cmath
+    const CMATH_FNS = ['pow','sqrt','abs','fabs','ceil','floor','round','fmod',
+                        'log','log2','log10','exp','sin','cos','tan','asin','acos','atan','atan2'];
+    const usesCmath = CMATH_FNS.some(fn => new RegExp(`\\b${fn}\\s*\\(`).test(sourceCode));
+    if (usesCmath && !hasHeader('cmath') && !hasHeader('math.h')) {
+      depErrors.push({
+        type: 'semantic', severity: 'error',
+        message: "Math functions (pow, sqrt, etc.) require '#include <cmath>'",
+        line: 1, column: 1,
+      });
+    }
+
+    // iomanip
+    const usesIomanip = /\b(setw|setprecision|setfill)\s*\(/.test(sourceCode);
+    if (usesIomanip && !hasHeader('iomanip')) {
+      depErrors.push({
+        type: 'semantic', severity: 'error',
+        message: "Formatting functions (setw, setprecision, setfill) require '#include <iomanip>'",
+        line: 1, column: 1,
+      });
+    }
+
+    // string conversions
+    const usesStringFns = /\b(stoi|stod|stof|stol|stoul|to_string)\s*\(/.test(sourceCode);
+    if (usesStringFns && !hasHeader('string')) {
+      depErrors.push({
+        type: 'semantic', severity: 'error',
+        message: "String conversion functions (stoi, stod, to_string, etc.) require '#include <string>'",
+        line: 1, column: 1,
+      });
+    }
+
+    // fstream
+    const usesFstream = /\b(ifstream|ofstream|fstream)\b/.test(sourceCode);
+    if (usesFstream && !hasHeader('fstream')) {
+      depErrors.push({
+        type: 'semantic', severity: 'error',
+        message: "File stream types (ifstream, ofstream, fstream) require '#include <fstream>'",
+        line: 1, column: 1,
+      });
+    }
+
+    if (depErrors.length > 0) {
+      return res.status(200).json({
+        success: false,
+        tokens: lexResult.tokens,
+        ast,
+        errors: depErrors,
+        safetyChecks: [],
+        cfg: { nodes: [], edges: [] },
+        cognitiveComplexity: 0,
+        cyclomaticComplexity: { score: 0, rating: 'low', interpretation: '' },
+        gamification: { xpEarned: 0, qualityBonus: 0 },
+        symbolicExecution: [],
+        explanations: ['❌ **Status:** Strict Dependency Check Failed.', ...depErrors.map(e => `🔗 ${e.message}`)],
+      });
+    }
+
+    // ─── PHASE 4: Semantic Analysis & Symbol Table ───────────────────────────
+    const typeChecker = new TypeChecker();
+    let typeResult: { symbolTable: any; errors: any[] };
+    try {
+      typeResult = typeChecker.check(ast);
+    } catch (tcErr: any) {
+      console.error('⚠️ TypeChecker Error:', tcErr?.message, tcErr?.stack);
+      typeResult = { symbolTable: {}, errors: [] };
+    }
+
+    const semanticErrors = typeResult.errors.filter(e => e.severity === 'error');
+    const semanticWarnings = typeResult.errors.filter(
+      e =>
+        e.severity === 'warning' &&
+        !STD_LIB_SYMBOLS.some(
+          sym => e.message.includes(`'${sym}'`) && e.message.toLowerCase().includes('unused'),
+        ),
+    );
+
+    if (semanticErrors.length > 0) {
+      // Build partial CFG even on semantic error so the frontend can show
+      // what was parsed successfully.
+      let partialCfg = { nodes: [] as any[], edges: [] as any[] };
+      try { partialCfg = new CFGGenerator().generate(ast); } catch (_) { /* best-effort */ }
+
+      return res.status(200).json({
+        success: false,
+        tokens: lexResult.tokens,
+        ast,
+        symbolTable: filterUserSymbols(typeResult.symbolTable),
+        errors: semanticErrors,
+        warnings: semanticWarnings,
+        safetyChecks: [],
+        cfg: partialCfg,
+        cognitiveComplexity: 0,
+        gamification: { xpEarned: 0, qualityBonus: 0 },
+        symbolicExecution: [],
+        explanations: [
+          '❌ **Status:** Semantic Analysis Failed',
+          ...semanticErrors.map(e => `🚨 **Error (L${e.line}):** ${e.message}`),
+          ...semanticWarnings.map(w => `⚠️ **Warning (L${w.line}):** ${w.message}`),
+        ],
+      });
+    }
+
+    // ─── PHASE 5: Symbolic Execution (Safety Checks) ────────────────────────
+    const executor = new SymbolicExecutor(typeResult.symbolTable);
+    const safetyChecks = executor.execute(ast);
+
+    // ─── PHASE 6: Symbolic Execution — real value trace for the Math tab ──────
+    // Pull the rich value trace from the executor (concrete values tracked during execution)
+    const symbolicExecution = executor.valueTrace.length > 0
+      ? executor.valueTrace
+      : buildSymbolicTrace(typeResult.symbolTable);
+
+    // ─── PHASE 7: Control Flow Graph ─────────────────────────────────────────
+    let cfg: any = { nodes: [], edges: [] };
+    try { cfg = new CFGGenerator().generate(ast); }
+    catch (cfgErr: any) { console.error('⚠️ CFG Error:', cfgErr?.message); }
+
+    // ─── PHASE 8: Mentor Explanations ────────────────────────────────────────
+    let mentorExplanations: string[] = [];
+    try { mentorExplanations = new Translator().translate(ast); }
+    catch (transErr: any) { console.error('⚠️ Translator Error:', transErr?.message); }
+
+    // ─── PHASE 9: Cognitive + Cyclomatic Complexity ──────────────────────────
+    let complexityScore = 0;
+    let cyclomaticResult: any = { score: 1, rating: 'low', interpretation: 'Simple code.' };
+    try { complexityScore = new CognitiveComplexity().calculate(ast); }
+    catch (scoreErr: any) { console.error('⚠️ Cognitive Scoring Error:', scoreErr?.message); }
+    try { cyclomaticResult = new CyclomaticComplexity().calculate(ast); }
+    catch (scoreErr: any) { console.error('⚠️ Cyclomatic Scoring Error:', scoreErr?.message); }
+
+    // ─── PHASE 10: Gamification ──────────────────────────────────────────────
+    const gameEngine = new GameEngine();
+    const { currentLevel = 1 } = req.body;  // caller sends actual user level
+    const reward = gameEngine.calculateReward(
+      {
+        cognitiveComplexity: complexityScore,
+        cyclomaticComplexity: cyclomaticResult.score,
+        errors: [],
+        safetyChecks,
+      } as any,
+      hintsUsed,
+    );
+    return res.status(200).json({
+      success: true,
+      tokens: lexResult.tokens,
+      ast,
+      symbolTable: filterUserSymbols(typeResult.symbolTable),
+      safetyChecks,
+      symbolicExecution,
+      cfg,
+      cognitiveComplexity: complexityScore,
+      cyclomaticComplexity: cyclomaticResult,
+      explanations: [
+        ...semanticWarnings.map(w => `⚠️ **WARNING (L${w.line}):** ${w.message}`),
+        ...mentorExplanations,
+      ],
+      errors: [],
+      warnings: semanticWarnings,
+      gamification: {
+        xpEarned: reward.xp,
+        qualityBonus: reward.bonus,
+        levelTitle: gameEngine.getLevelTitle(currentLevel),
+      },
+    } satisfies Partial<AnalysisResult> & { tokens: any; warnings: any; cyclomaticComplexity: any });
+
+  } catch (criticalErr: any) {
+    console.error('🔥 Critical Engine Error:', criticalErr?.message);
+    console.error('🔥 Stack:', criticalErr?.stack);
+    return res.status(200).json({
+      success: false,
+      tokens: lexResult.tokens,
+      ast,
+      errors: [{
+        type: 'semantic',
+        severity: 'error',
+        message: `Internal Engine Error: ${criticalErr.message}`,
+        line: 0,
+      }],
+      safetyChecks: [],
+      cfg: { nodes: [], edges: [] },
+      cognitiveComplexity: 0,
+      gamification: { xpEarned: 0, qualityBonus: 0 },
+      symbolicExecution: [],
+      explanations: ['🔥 **Status:** The analysis engine encountered an unexpected error.'],
+    });
+  }
 });
+
+// ---------------------------------------------------------------------------
+// Helper: strip stdlib pre-registered symbols, keep only user-declared ones
+// ---------------------------------------------------------------------------
+const STDLIB_NAMES = new Set([
+  'cout','cin','cerr','clog','endl','setw','setprecision','setfill',
+  'fixed','showpoint','left','right','boolalpha','noboolalpha',
+  'pow','sqrt','abs','fabs','ceil','floor','round','fmod',
+  'log','log2','log10','exp','sin','cos','tan','asin','acos','atan','atan2',
+  'system','exit','rand','srand','getline',
+  'stoi','stol','stoul','stod','stof','to_string',
+  'ifstream','ofstream','fstream','string','nullptr',
+]);
+
+function filterUserSymbols(symbolTable: Record<string, any>): Record<string, any> {
+  const result: Record<string, any> = {};
+  for (const [key, sym] of Object.entries(symbolTable)) {
+    // Skip line-0 entries (all stdlib symbols are pre-registered at line 0)
+    if ((sym.line ?? 0) === 0) continue;
+    // Skip known stdlib names regardless of line number
+    const shortName = (key.split('::').pop() ?? key) as string;
+    if (STDLIB_NAMES.has(shortName)) continue;
+    result[key] = sym;
+  }
+  return result;
+}
+
+// ---------------------------------------------------------------------------
+// Helper: convert the symbol table into SymbolicEntry[] for the Math tab
+// ---------------------------------------------------------------------------
+function buildSymbolicTrace(
+  symbolTable: Record<string, any>,
+): Array<{ expression: string; value: string | number }> {
+  const entries: Array<{ expression: string; value: string | number }> = [];
+  for (const [key, sym] of Object.entries(symbolTable)) {
+    if ((sym.line ?? 0) === 0) continue;      // skip stdlib
+    if (sym.kind === 'function') continue;
+    const label = key.split('::').slice(1).join('::') || sym.name;
+    entries.push({
+      expression: `${sym.type} ${label}`,
+      value: sym.initialized ? sym.type : 'uninitialized',
+    });
+  }
+  return entries;
+}
 
 export default router;

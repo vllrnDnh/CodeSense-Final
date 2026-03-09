@@ -27,21 +27,38 @@ export class GameEngine {
         // 1. Base XP for successful compilation (valid syntax)
         let xp = 10; 
 
-        // 2. Complexity Bonus (Harder code = More XP)
-        // Cap at 50 to prevent users from spamming loops just for points
-        const complexityBonus = Math.min(analysis.cognitiveComplexity * 2, 50);
-        xp += complexityBonus;
+        // 2. Cognitive Complexity scoring (nesting-weighted)
+        const cogComplexity = analysis.cognitiveComplexity ?? 0;
+        const cogRaw = cogComplexity <= 3
+            ? cogComplexity * 2          // up to +6 for simple code
+            : -((cogComplexity - 3) * 5); // penalty for high nesting
+        xp += cogRaw;
 
-        // 3. Quality Bonus (Clean Code)
-        // If there are 0 warnings/errors and 0 safety risks, give a "Clean Code" bonus
+        // 2b. Cyclomatic Complexity scoring
+        const cycloScore: number = (analysis as any).cyclomaticComplexity?.score
+            ?? (analysis as any).cyclomaticComplexity   // handles plain number
+            ?? 1;
+        const cycloAdj = cycloScore <= 5 ? 3
+            : cycloScore > 10 ? -Math.floor((cycloScore - 10) * 2)
+            : 0;
+        xp += cycloAdj;
+
+        // 3. Quality Bonus — awarded when there are no compiler errors.
+        //    Safety warnings (UNSAFE safetyChecks) deduct from bonus but don't zero it.
         let qualityBonus = 0;
-        if (analysis.errors.length === 0 && analysis.safetyChecks.length === 0) {
-            qualityBonus = 15;
-            xp += qualityBonus;
+        const errorCount = analysis.errors?.length ?? 0;
+        const unsafeCount = (analysis.safetyChecks ?? []).filter((s: any) => s.status === 'UNSAFE').length;
+
+        if (errorCount === 0) {
+            // Full bonus for clean code, reduced by unsafe checks (min 5 if any unsafe found)
+            qualityBonus = unsafeCount === 0 ? 15 : Math.max(5, 15 - unsafeCount * 3);
         }
 
-        // 4. Penalty for Hints
-        // Each hint costs 5 XP (but XP cannot go below 0)
+        // Apply floor THEN add quality bonus so even heavily penalised but clean code
+        // still gets the quality reward.
+        xp = Math.max(0, xp) + qualityBonus;
+
+        // 4. Hint penalty (applied last, after quality bonus)
         const hintPenalty = hintsUsed * 5;
         xp = Math.max(0, xp - hintPenalty);
 

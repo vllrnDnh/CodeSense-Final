@@ -4,8 +4,7 @@ import { useAuth } from './components/AuthScreen';
 
 export const LoginPage: React.FC = () => {
   const navigate = useNavigate();
-  // Pull goBack from the updated AuthContext
-  const { login, continueAsGuest, goBack } = useAuth();
+  const { login, continueAsGuest } = useAuth();
   
   const [formData, setFormData] = useState({ playerName: '', secretCode: '' });
   const [error, setError] = useState('');
@@ -18,9 +17,8 @@ export const LoginPage: React.FC = () => {
 
     try {
       await login(formData.playerName, formData.secretCode);
-      navigate('/home');
+      navigate('/welcome'); 
     } catch (err) {
-      // This will now catch the error from our localStorage check
       setError('Invalid Player Name or Secret Code.');
     } finally {
       setIsLoading(false);
@@ -29,16 +27,15 @@ export const LoginPage: React.FC = () => {
 
   const handleGuestEntry = () => {
     continueAsGuest();
-    navigate('/sandbox');
+    navigate('/welcome'); 
   };
 
   return (
     <div style={containerStyle}>
       <div style={cardStyle}>
-        {/* ADDED: BACK BUTTON */}
         <div style={{ width: '100%', marginBottom: '15px', textAlign: 'left' }}>
           <button 
-            onClick={goBack} 
+            onClick={() => navigate('/')} 
             style={{
               background: 'transparent',
               border: 'none',
@@ -51,7 +48,7 @@ export const LoginPage: React.FC = () => {
               gap: '5px'
             }}
           >
-            ← Back to Home
+            &larr; Back to Home
           </button>
         </div>
 
@@ -104,24 +101,8 @@ export const LoginPage: React.FC = () => {
   );
 };
 
-// Styles
-const containerStyle: React.CSSProperties = { 
-    minHeight: '100vh', 
-    display: 'flex', 
-    alignItems: 'center', 
-    justifyContent: 'center', 
-    background: '#0d1117',
-    padding: '20px'
-};
-const cardStyle = { 
-    background: '#161b22', 
-    padding: '40px', 
-    borderRadius: '16px', 
-    border: '1px solid #30363d', 
-    width: '100%', 
-    maxWidth: '400px',
-    boxShadow: '0 8px 32px rgba(0, 0, 0, 0.4)'
-};
+const containerStyle: React.CSSProperties = { minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#0d1117', padding: '20px' };
+const cardStyle = { background: '#161b22', padding: '40px', borderRadius: '16px', border: '1px solid #30363d', width: '100%', maxWidth: '400px', boxShadow: '0 8px 32px rgba(0, 0, 0, 0.4)' };
 const labelStyle = { display: 'block', color: '#8b949e', fontSize: '12px', marginBottom: '8px', fontWeight: 'bold' as const };
 const inputStyle = { width: '100%', padding: '12px', background: '#0d1117', border: '1px solid #30363d', borderRadius: '8px', color: 'white', outline: 'none' };
 const primaryBtnStyle = { width: '100%', padding: '12px', background: '#238636', color: 'white', border: 'none', borderRadius: '8px', fontWeight: 'bold' as const, cursor: 'pointer' };

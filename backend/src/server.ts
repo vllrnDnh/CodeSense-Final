@@ -30,7 +30,7 @@ app.use(cors({
             !origin || 
             allowedOrigins.includes(origin) || 
             origin.endsWith('.vercel.app') || 
-            origin.endsWith('.devtunnels.ms') // Wildcard for all dev tunnels
+            origin.endsWith('.devtunnels.ms') 
         ) {
             callback(null, true);
         } else {

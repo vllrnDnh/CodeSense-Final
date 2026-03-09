@@ -383,25 +383,20 @@ export interface SymbolicEntry {
 
 export interface AnalysisResult {
   success: boolean;
-  
-  // Phase 1
   tokens: Token[];
   ast: ASTNode | null;
-  
-  // Phase 2
   symbolTable?: SymbolInfo[] | Record<string, SymbolInfo>;
   safetyChecks: SafetyCheck[];
-  explanations: string[]; 
+  explanations: string[];
   errors: AnalysisError[];
-  
-  // Phase 3
-  cfg: CFG; 
+  cfg: CFG;
   cognitiveComplexity: number;
-
-  // Phase 4: ADDED FOR MATH TAB
   symbolicExecution?: SymbolicEntry[];
-  
-  // Phase 5: Gamification
+
+  // ADD THESE TWO:
+  warnings?: AnalysisError[];
+  cyclomaticComplexity?: { score: number; rating: string; interpretation: string };
+
   gamification?: {
     xpEarned: number;
     levelTitle: string;

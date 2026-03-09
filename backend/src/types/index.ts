@@ -16,9 +16,11 @@ export type ASTNode =
   | ArrayAccessNode | InitializerListNode | FunctionCallNode
   | UnaryOpNode | GlobalAccessNode | LoopControlNode
   | BlockNode | ExpressionStatementNode | StreamStatementNode
-  // NEW: Advanced Features
+  | NewExpressionNode | DeleteStatementNode 
   | PreprocessorNode | CastExpressionNode | SizeofExpressionNode 
-  | ConditionalExpressionNode | LambdaExpressionNode;
+  | ConditionalExpressionNode | LambdaExpressionNode
+  | RangeBasedForNode | TryStatementNode | CatchClauseNode
+  | ThrowStatementNode;
 
 
 export interface FunctionPrototypeNode extends BaseNode {
@@ -108,6 +110,18 @@ export interface ErrorNode extends BaseNode {
 export interface WarningNode extends BaseNode {
   type: 'Warning';
   message: string;
+}
+
+export interface NewExpressionNode extends BaseNode {
+  type: 'NewExpression';
+  baseType: string;
+  size?: ASTNode; // For dynamic arrays: new int[n]
+}
+
+export interface DeleteStatementNode extends BaseNode {
+  type: 'DeleteStatement';
+  target: string;   // The name of the pointer being deleted
+  isArray?: boolean; // For delete[]
 }
 
 export interface LineNode extends BaseNode {
@@ -408,6 +422,7 @@ export interface AnalysisResult {
   // Phase 3
   cfg: CFG; 
   cognitiveComplexity: number;
+  cyclomaticComplexity?: CyclomaticMetrics;
 
   // Phase 4: ADDED FOR MATH TAB
   symbolicExecution?: SymbolicEntry[];
@@ -567,4 +582,53 @@ export interface GraphEdge {
   from: string;
   to: string;
   label?: string;
+}
+// ============================================================================
+// NEW AST Node Types (Phase 2 grammar extensions)
+// ============================================================================
+
+export interface RangeBasedForNode extends BaseNode {
+  type: 'RangeBasedFor';
+  varType: string;
+  name: string;
+  range: ASTNode;
+  body: ASTNode[];
+}
+
+export interface TryStatementNode extends BaseNode {
+  type: 'TryStatement';
+  body: ASTNode[];
+  handlers: CatchClauseNode[];
+}
+
+export interface CatchClauseNode extends BaseNode {
+  type: 'CatchClause';
+  param: CatchParamNode | CatchAllNode;
+  body: ASTNode[];
+}
+
+export interface CatchParamNode extends BaseNode {
+  type: 'CatchParam';
+  varType: string;
+  name: string | null;
+}
+
+export interface CatchAllNode extends BaseNode {
+  type: 'CatchAll';
+}
+
+export interface ThrowStatementNode extends BaseNode {
+  type: 'ThrowStatement';
+  value?: ASTNode;
+}
+
+// ============================================================================
+// Cyclomatic Complexity (added to AnalysisResult)
+// ============================================================================
+export interface CyclomaticMetrics {
+  score: number;           // V(G) = edges - nodes + 2*connected_components
+  edges: number;
+  nodes: number;
+  rating: 'low' | 'moderate' | 'high' | 'very high';
+  interpretation: string;
 }
