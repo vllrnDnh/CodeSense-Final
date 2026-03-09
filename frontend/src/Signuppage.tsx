@@ -184,25 +184,26 @@ export const SignupPage: React.FC = () => {
       `}</style>
 
       <div style={{
-        minHeight: '100vh',
-        background: 'radial-gradient(ellipse at 20% 50%, #0d1f12 0%, #0d1117 40%, #111827 100%)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: '24px 16px',
-        fontFamily: "'IBM Plex Sans', -apple-system, sans-serif",
-      }}>
+  minHeight: '100vh',
+  width: '100%',
+  background: 'radial-gradient(ellipse at 20% 50%, #0d1f12 0%, #0d1117 40%, #111827 100%)',
+  display: 'block', 
+  overflowY: 'auto', 
+  fontFamily: "'IBM Plex Sans', -apple-system, sans-serif",
+  WebkitOverflowScrolling: 'touch', 
+}}>
 
-        <div style={{
-          background: 'linear-gradient(160deg, rgba(22,27,34,0.97) 0%, rgba(13,17,23,0.97) 100%)',
-          borderRadius: 16,
-          padding: '36px 40px',
-          width: '100%',
-          maxWidth: 500,
-          border: '1px solid #21262d',
-          boxShadow: '0 24px 64px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.04)',
-          animation: 'fadeUp 0.3s ease-out',
-        }}>
+  <div style={{
+    background: 'linear-gradient(160deg, rgba(22,27,34,0.97) 0%, rgba(13,17,23,0.97) 100%)',
+    borderRadius: 16,
+    padding: '36px 40px',
+    width: 'calc(100% - 32px)', 
+    maxWidth: 500,
+    margin: '40px auto', 
+    border: '1px solid #21262d',
+    boxShadow: '0 24px 64px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.04)',
+    animation: 'fadeUp 0.3s ease-out',
+  }}>
 
           {/* Back button */}
           <button
