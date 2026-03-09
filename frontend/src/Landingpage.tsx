@@ -1,10 +1,9 @@
 import React, { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useAuth } from './components/AuthScreen';
+
 
 export const LandingPage: React.FC = () => {
   const navigate = useNavigate();
-  const { continueAsGuest } = useAuth();
 
   // Override layout.css overflow:hidden so page can scroll
   useEffect(() => {
@@ -30,11 +29,6 @@ export const LandingPage: React.FC = () => {
       })
     }
   }, [])
-
-  const handleGuestAccess = () => {
-    continueAsGuest();
-    navigate('/welcome');
-  };
 
   return (
     <>
@@ -166,30 +160,13 @@ export const LandingPage: React.FC = () => {
           {/* CTA row */}
           <div className="cta-row" style={{ display: 'flex', gap: '14px', justifyContent: 'center', marginBottom: '28px', flexWrap: 'wrap' }}>
             <button className="cta-primary" onClick={() => navigate('/signup')}>
-              Get Started Free
+              Create an Account
             </button>
             <button className="cta-secondary" onClick={() => navigate('/login')}>
               Sign In
             </button>
           </div>
 
-          {/* Guest box */}
-          <div style={{
-            padding: '24px 32px',
-            background: 'rgba(255,255,255,0.03)',
-            border: '1px solid #21262d', borderRadius: '14px',
-            maxWidth: '440px', margin: '0 auto'
-          }}>
-            <p style={{ color: '#8b949e', fontSize: '14px', marginBottom: '14px' }}>
-              Want to try without signing up?
-            </p>
-            <button className="guest-btn" onClick={handleGuestAccess}>
-              Continue as Guest
-            </button>
-            <p style={{ color: '#484f58', fontSize: '12px', marginTop: '10px', fontStyle: 'italic', marginBottom: 0 }}>
-              Limited features · Progress not saved
-            </p>
-          </div>
 
         </div>
       </div>

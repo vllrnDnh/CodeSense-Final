@@ -43,7 +43,7 @@ html, body, #root {
   background: var(--bg-void);
   font-family: 'IBM Plex Sans', 'Segoe UI', system-ui, sans-serif;
   color: var(--text-primary);
-  overflow: hidden; 
+  overflow: auto;
   -webkit-font-smoothing: antialiased;
 }
 
