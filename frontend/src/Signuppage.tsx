@@ -141,7 +141,7 @@ export const SignupPage: React.FC = () => {
       } else if (msg === 'EMAIL_TAKEN') {
         setErrors({ email: 'An account with this email already exists.' });
       } else if (msg === 'SIGNUP_FAILED') {
-        setErrors({ submit: 'Sign-up failed. Please try again.' });
+        setErrors({ submit: 'Sign-up failed. Please try again.' }); //toast message for unregistered users
       } else {
         setErrors({ submit: 'An unexpected error occurred. Please try again.' });
       }
