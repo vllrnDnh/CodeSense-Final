@@ -650,6 +650,14 @@ export class TypeChecker {
     const call = node as FunctionCallNode;
     this.markRead(call.name);
 
+    if (this.currentFunction && call.name === this.currentFunction.name) {
+    this.addError(
+      node,
+      `Recursive call detected: '${call.name}' calls itself. Ensure a base case exists to prevent infinite recursion.`,
+      'warning',
+    );
+  }
+
     if (call.arguments) {
       call.arguments.forEach((arg: ASTNode) => this.visit(arg));
     }
@@ -902,15 +910,22 @@ export class TypeChecker {
     }
 
     if (['&', '|', '^', '<<', '>>'].includes(bin.operator)) {
-      if (!this.isIntegralType(leftType) || !this.isIntegralType(rightType)) {
-        this.addError(
-          node,
-          `Bitwise operator '${bin.operator}' requires integral operands, got '${leftType}' and '${rightType}'`,
-          'error',
-        );
-      }
-      return this.promoteType(leftType, rightType);
-    }
+  // << and >> are stream operators when either side is ostream/istream/manipulator
+  // — skip the integral check entirely in that case.
+  const streamTypes = ['ostream', 'istream', 'manipulator', 'unknown'];
+  const isStreamOp =
+    (bin.operator === '<<' || bin.operator === '>>') &&
+    (streamTypes.includes(leftType) || streamTypes.includes(rightType));
+
+  if (!isStreamOp && (!this.isIntegralType(leftType) || !this.isIntegralType(rightType))) {
+    this.addError(
+      node,
+      `Bitwise operator '${bin.operator}' requires integral operands, got '${leftType}' and '${rightType}'`,
+      'error',
+    );
+  }
+  return isStreamOp ? leftType : this.promoteType(leftType, rightType);
+}
 
     return null;
   }

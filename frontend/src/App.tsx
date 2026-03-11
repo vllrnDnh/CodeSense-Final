@@ -10,6 +10,7 @@ import { ProgressPage } from './Progresspage'
 import { ProfileSettings } from './ProfileSettings';
 import { LeaderboardPage } from './LeaderboardPage';
 import { WelcomePage } from './WelcomePage';
+import { CampaignPage } from './CampaignPage';
 
 // Real ProtectedRoute logic that checks both authentication and guest status
 const ProtectedRoute: React.FC<{ children: React.ReactElement }> = ({ children }) => {
@@ -62,7 +63,8 @@ export const App: React.FC = () => {
 
           {/* These redirect back to /home so you stay logged in! */}
           <Route path="*" element={<Navigate to="/" replace />} />
-          <Route path="/campaign" element={<Navigate to="/home" replace />} />
+          <Route path="/campaign" element={<ProtectedRoute><CampaignPage /></ProtectedRoute>} />
+          <Route path="/campaign/:phase" element={<ProtectedRoute><CampaignPage /></ProtectedRoute>} />
           <Route path="/profile" element={<ProfileSettings />} />
           <Route path="/settings" element={<Navigate to="/home" replace />} />
           <Route path="/leaderboard" element={<LeaderboardPage />} />

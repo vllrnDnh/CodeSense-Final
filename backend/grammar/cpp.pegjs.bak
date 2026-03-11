@@ -667,8 +667,6 @@ ReservedWord
     / "struct" / "switch" / "template" / "this" / "throw" / "true"
     / "try" / "typedef" / "typename" / "union" / "unsigned" / "using"
     / "virtual" / "void" / "volatile" / "while"
-    / "pow" / "sqrt" / "abs" / "ceil" / "floor" / "round"
-    / "setprecision" / "fixed" / "getline" / "endl" / "cout" / "cin"
     ) ![a-zA-Z0-9_]
 
 // ============================================================================

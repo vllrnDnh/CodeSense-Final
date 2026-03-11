@@ -30,11 +30,11 @@ import {
 } from '../types';
 
 export type SymbolicValue =
-  | { type: 'concrete'; value: number; arraySize?: number }
-  | { type: 'symbolic'; name: string; constraints: Constraint[]; arraySize?: number }
-  | { type: 'unknown'; arraySize?: number }
-  | { type: 'pointer'; target?: string; offset: number; isNull?: boolean; isFreed?: boolean; arraySize?: number }
-  | { type: 'nullptr'; arraySize?: number };
+| { type: 'concrete'; value: number; arraySize?: number; arraySizes?: number[] }
+| { type: 'symbolic'; name: string; constraints: Constraint[]; arraySize?: number; arraySizes?: number[] }
+| { type: 'unknown'; arraySize?: number; arraySizes?: number[] }
+| { type: 'pointer'; target?: string; offset: number; isNull?: boolean; isFreed?: boolean; arraySize?: number; arraySizes?: number[] }
+| { type: 'nullptr'; arraySize?: number; arraySizes?: number[] }
 
 interface Constraint {
   variable: string;
@@ -122,8 +122,10 @@ export class SymbolicExecutor {
         // Pre-seed local arrays too so bounds checks work even before decl is visited
         if (symbol.dimensions?.length) {
           this.state.variables.set(symbol.name, {
-            type: 'concrete', value: 0, arraySize: symbol.dimensions[0],
-          });
+  type: 'concrete', value: 0,
+  arraySize: symbol.dimensions[0],
+  arraySizes: symbol.dimensions,   // store ALL dims
+});
         }
       }
     });
@@ -265,7 +267,16 @@ export class SymbolicExecutor {
       const dim0 = (node.dimensions[0] as any)?.value;
       if (typeof dim0 === 'number') size = dim0;
     }
-    const finalVal: SymbolicValue = size !== undefined ? { ...val, arraySize: size } : val;
+    const allDims: number[] = [];
+if (node.dimensions) {
+  node.dimensions.forEach((d: any) => {
+    const v = d?.value;
+    if (typeof v === 'number') allDims.push(v);
+  });
+}
+const finalVal: SymbolicValue = allDims.length > 0
+  ? { ...val, arraySize: allDims[0], arraySizes: allDims }
+  : val;
     this.state.variables.set(node.name, finalVal);
 
     // Emit to rich Math tab trace
@@ -608,7 +619,9 @@ export class SymbolicExecutor {
         })();
 
         if (resolvedIdx?.type === 'concrete') {
-          const sizeForDim = dim === 0 ? arr.arraySize : undefined;
+          const sizeForDim = arr.arraySizes
+  ? arr.arraySizes[dim]
+  : (dim === 0 ? arr.arraySize : undefined);
           if (sizeForDim !== undefined) {
             if (resolvedIdx.value < 0) {
               this.addSafetyCheck(
@@ -710,9 +723,17 @@ export class SymbolicExecutor {
   }
 
   private visitFunctionCall(node: FunctionCallNode): SymbolicValue {
-    (node.arguments || []).forEach((arg: ASTNode) => this.visit(arg));
-    return { type: 'unknown' as const };
+  if (node.name === this.currentFunction) {
+    this.addSafetyCheck(
+      (node as any).line || 0,
+      'recursion',
+      'WARNING',
+      `Recursive call to '${node.name}' detected. Verify a base case exists to prevent a stack overflow.`,
+    );
   }
+  (node.arguments || []).forEach((arg: ASTNode) => this.visit(arg));
+  return { type: 'unknown' as const };
+}
 
   private visitMultipleVariableDecl(node: any): SymbolicValue {
     (node.declarations || []).forEach((decl: ASTNode) => this.visit(decl));

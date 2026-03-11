@@ -36,6 +36,10 @@ export class CFGGenerator {
   private currentNodeId = 0;
   private mentor = new Translator();
 
+  // ── FIX 4: Track current function entry node and name for recursion back-edges
+  private currentFunctionEntry: ControlFlowNode | null = null;
+  private currentFunctionName: string = '';
+
   generate(ast: ASTNode): CFG {
     this.nodes = [];
     this.edges = [];
@@ -413,9 +417,18 @@ export class CFGGenerator {
     return step;
   }
 
+  // ── FIX 4: visitFunctionCall — draw a labeled recursive back-edge when
+  //   the call target matches the function we are currently inside.
   private visitFunctionCall(node: any, current: ControlFlowNode): ControlFlowNode {
     const step = this.createNode('process', `Call: ${node.name}`, `${node.name}(...)`, node.line, node);
     this.connect(current, step);
+
+    // If this call targets the current function, add a "Recursive" back-edge
+    // to its entry node so the graph visually shows the self-loop.
+    if (node.name === this.currentFunctionName && this.currentFunctionEntry) {
+      this.connect(step, this.currentFunctionEntry, 'Recursive');
+    }
+
     return step;
   }
 
@@ -433,13 +446,31 @@ export class CFGGenerator {
   }
 
   // ── Functions ─────────────────────────────────────────────────────────────
+
+  // ── FIX 4: visitFunctionDecl — save/restore currentFunctionEntry and
+  //   currentFunctionName so nested function declarations don't clobber
+  //   each other, and recursive calls in the body can find the entry node.
   private visitFunctionDecl(
     node: FunctionDeclNode,
     current: ControlFlowNode,
     exit: ControlFlowNode,
   ): ControlFlowNode {
-    const funcStart = this.createNode('start', `Func: ${node.name}`, `${(node as any).returnType} ${node.name}(...)`, (node as any).line, node);
-    const funcEnd   = this.createNode('end',   `End: ${node.name}`);
+    const funcStart = this.createNode(
+      'start',
+      `Func: ${node.name}`,
+      `${(node as any).returnType} ${node.name}(...)`,
+      (node as any).line,
+      node,
+    );
+    const funcEnd = this.createNode('end', `End: ${node.name}`);
+
+    // Save outer function context before overwriting (supports nested functions)
+    const prevEntry = this.currentFunctionEntry;
+    const prevName  = this.currentFunctionName;
+
+    // Point to this function's entry so visitFunctionCall can find it
+    this.currentFunctionEntry = funcStart;
+    this.currentFunctionName  = node.name;
 
     // Functions are self-contained — connect program flow around them
     // but also build their internal graph from funcStart → funcEnd
@@ -454,6 +485,11 @@ export class CFGGenerator {
     if (lastNode !== funcEnd) {
       this.connect(lastNode, funcEnd);
     }
+
+    // Restore the outer function context (important for nested declarations)
+    this.currentFunctionEntry = prevEntry;
+    this.currentFunctionName  = prevName;
+
     return funcEnd;
   }
 

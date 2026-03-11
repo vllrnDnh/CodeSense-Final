@@ -30,6 +30,7 @@ import {
 export class Translator {
   private explanations: string[] = [];
   private indentLevel: number = 0;
+  private currentFunctionName: string = '';
 
   private cleanName(name: any): string {
     if (!name) return 'unknown';
@@ -171,6 +172,8 @@ export class Translator {
 
   private visitFunctionDecl(node: FunctionDeclNode): void {
     const name   = this.cleanName(node.name);
+    const prevFunctionName = this.currentFunctionName;  // NEW
+    this.currentFunctionName = name;   
     const isMain = name === 'main';
 
     if (isMain) {
@@ -196,19 +199,33 @@ export class Translator {
     }
     this.indentLevel--;
     this.explanations.push('');
+
+     this.currentFunctionName = prevFunctionName;
   }
 
   private visitFunctionCall(node: FunctionCallNode): void {
     const name     = this.cleanName(node.name);
     const argCount = node.arguments?.length || 0;
 
-    this.explanations.push(`${this.indent()}📞 **Call: '${name}'**`);
+     if (name === this.currentFunctionName) {
+    this.explanations.push(`${this.indent()}🔁 **Recursive Call: '${name}'**`);
+    this.explanations.push(`${this.indent()}   This function is calling ITSELF.`);
+    this.explanations.push(`${this.indent()}   ⚠️ Make sure there is a base case, or this will loop forever.`);
     if (argCount > 0) {
       const args = node.arguments.map(a => this.formatExpr(a)).join(', ');
-      this.explanations.push(`${this.indent()}   Arguments: ${args}`);
+      this.explanations.push(`${this.indent()}   Arguments passed: ${args}`);
     }
     this.explanations.push('');
+    return;
   }
+
+  this.explanations.push(`${this.indent()}📞 **Call: '${name}'**`);
+  if (argCount > 0) {
+    const args = node.arguments.map(a => this.formatExpr(a)).join(', ');
+    this.explanations.push(`${this.indent()}   Arguments: ${args}`);
+  }
+  this.explanations.push('');
+}
 
   private visitReturnStatement(node: ReturnStatementNode): void {
     if (node.value) {

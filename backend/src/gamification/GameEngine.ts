@@ -138,7 +138,14 @@ export class GameEngine {
                     explanation: "You are using a variable that hasn't been given a value yet.",
                     xpCost: 5
                 };
-            default:
+                case 'recursion':
+                    return {
+                        errorCode: 'LOG_02',
+                        clue: "This function is calling itself.",
+                        explanation: "Recursive functions need a base case — a condition where the function stops calling itself. Without it, the program will crash with a stack overflow.",
+                        xpCost: 10
+                    };
+             default:
                 return {
                     errorCode: 'GEN_01',
                     clue: "Review the logic flow.",
