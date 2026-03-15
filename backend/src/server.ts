@@ -96,5 +96,4 @@ if (process.env.NODE_ENV !== 'production') {
         console.log(`✅ CodeSense Backend is running locally on http://localhost:${PORT}`);
     });
 }
-
 export default app;
