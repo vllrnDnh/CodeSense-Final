@@ -16,7 +16,8 @@ const PORT = process.env.PORT || 3000;
 const allowedOrigins = [
     'http://localhost:5173', 
     'https://code-sense-final-lsif.vercel.app', // Production URL
-    'https://l00qvddz-5173.asse.devtunnels.ms'  // Your current Dev Tunnel
+    'https://l00qvddz-5173.asse.devtunnels.ms',  // Your current Dev Tunnel
+    'https://codesense-4f57.up.railway.app' // Railway Deployment
 ];
 
 app.use(cors({
