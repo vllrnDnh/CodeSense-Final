@@ -4,7 +4,7 @@
     "module": "commonjs",
     "lib": ["ES2020"],
     "outDir": "./dist",
-    "rootDir": "../",
+    "rootDir": "./src",        // ← changed from "../"
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
@@ -16,20 +16,14 @@
     "allowSyntheticDefaultImports": true,
     "types": ["node"],
 
-    // FIX: Now that we updated TypeScript, we can use "6.0" safely
-    "ignoreDeprecations": "5.0",
-
-    // Path Aliases (No baseUrl needed)
-    "paths": {
-      "@shared/*": ["../shared/*"]
-    }
+    "ignoreDeprecations": "5.0"
+    // removed @shared paths since there's no shared folder
   },
   "include": [
-    "src/**/*",
-    "../shared/**/*", 
+    "src/**/*"                 // ← removed "../shared/**/*"
   ],
   "exclude": [
     "node_modules",
-    "dist",
+    "dist"
   ]
 }
