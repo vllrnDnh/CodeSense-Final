@@ -92,9 +92,8 @@ app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
  * 5. SERVER EXECUTION LOGIC
  * Only run app.listen locally to avoid conflict with Vercel's serverless wrapper.
  */
-if (process.env.NODE_ENV !== 'production') {
-    app.listen(PORT, () => {
-        console.log(`✅ CodeSense Backend is running locally on http://localhost:${PORT}`);
-    });
-}
+app.listen(PORT, () => {
+    console.log(`✅ CodeSense Backend is running on port ${PORT}`);
+});
+
 export default app;
