@@ -601,6 +601,23 @@ const finalVal: SymbolicValue = allDims.length > 0
   private visitArrayAccess(node: ArrayAccessNode): SymbolicValue {
     const arr = this.state.variables.get(node.name);
 
+    if (arr && arr.type === 'pointer') {
+    if (arr.isNull) {
+      this.addSafetyCheck(
+        (node as any).line || 0, 'bounds', 'UNSAFE',
+        `Null pointer '${node.name}' used as array — will cause segfault`
+      );
+      return { type: 'unknown' as const };
+    }
+    if (arr.isFreed) {
+      this.addSafetyCheck(
+        (node as any).line || 0, 'bounds', 'UNSAFE',
+        `Use-after-free: '${node.name}' was deleted and then accessed`
+      );
+      return { type: 'unknown' as const };
+    }
+  }
+  
     if (arr?.arraySize !== undefined) {
       node.indices.forEach((indexNode: ASTNode, dim: number) => {
         const idxRaw = this.visit(indexNode);
@@ -824,14 +841,23 @@ const finalVal: SymbolicValue = allDims.length > 0
   // FIX 15: visitIdentifier — check initialized set for uninitialized access
   // ==========================================================================
   private visitIdentifier(node: any): SymbolicValue {
-    const val = this.state.variables.get(node.name);
-    if (val) return val;
-
-    // If the symbol was declared (in symbol table) but never initialized in
-    // our state, that is suspicious.
-    // We don't emit a safety check here — TypeChecker already covers it.
-    return { type: 'unknown' as const };
+  const val = this.state.variables.get(node.name);
+  
+  if (!val && !this.state.initialized.has(node.name)) {
+    // Check if it's a known standard library symbol
+    const stdSymbols = ['cout', 'cin', 'endl', 'cerr', 'string'];
+    if (!stdSymbols.includes(node.name)) {
+      this.addSafetyCheck(
+        (node as any).line || 0,
+        'uninitialized',
+        'WARNING',
+        `Variable '${node.name}' may be used before initialization`
+      );
+    }
   }
+  
+  return val ?? { type: 'unknown' as const };
+}
 
   // ==========================================================================
   // PATH CONSTRAINTS

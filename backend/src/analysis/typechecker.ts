@@ -386,9 +386,12 @@ export class TypeChecker {
   // Array Access
   // =========================================================================
   private visitMultipleVariableDecl(node: any): string | null {
-    (node.declarations || []).forEach((decl: ASTNode) => this.visitVariableDecl(decl));
-    return null;
-  }
+  let lastType: string | null = null;
+  (node.declarations || []).forEach((decl: ASTNode) => {
+    lastType = this.visitVariableDecl(decl);
+  });
+  return lastType;
+}
 
   private visitArrayAccess(node: ASTNode): string | null {
     const arr = node as ArrayAccessNode;
@@ -1163,15 +1166,16 @@ export class TypeChecker {
   // Range-Based For Loop  (C++11)
   // =========================================================================
   private visitRangeBasedFor(node: any): string | null {
-    this.visit(node.range);   // traverse range expression for side-effects (type checks, undeclared vars)
-    this.loopDepth++;
-    this.enterScope('range-for');
-    this.addSymbol(node.name, node.varType, node.line || 0, true, undefined, true, 'variable');
-    (node.body || []).forEach((s: any) => this.visit(s));
-    this.exitScope();
-    this.loopDepth--;
-    return null;
-  }
+  this.visit(node.range);
+  this.loopDepth++;
+  this.enterScope('range-for');
+  this.addSymbol(node.name, node.varType, node.line || 0, true, undefined, true, 'variable');
+  this.markRead(node.name); // ADD THIS LINE — the range loop implicitly uses the var
+  (node.body || []).forEach((s: any) => this.visit(s));
+  this.exitScope();
+  this.loopDepth--;
+  return null;
+}
 
   // Preprocessor no-ops
   private visitUndef(_n: any):    string | null { return null; }
@@ -1193,18 +1197,26 @@ export class TypeChecker {
   // Redundant-assignment & usage tracking
   // =========================================================================
   private markWrite(name: string, line: number): void {
-    const full = this.getFullyScopedName(name);
-    if (!full) return;
-    if (this.dirtyAssignment.has(full)) {
-      const prev = this.dirtyAssignment.get(full)!;
-      this.addError(
-        { line } as any,
-        `Redundant assignment: value assigned to '${name}' on line ${prev.line} was overwritten before being used.`,
-        'warning',
-      );
-    }
+  const full = this.getFullyScopedName(name);
+  if (!full) return;
+  
+  // NEW: Don't flag first write to parameters as redundant
+  const sym = this.symbolTable[full];
+  if (sym && (sym as any).kind === 'parameter') {
     this.dirtyAssignment.set(full, { line, overwritten: true });
+    return;
   }
+  
+  if (this.dirtyAssignment.has(full)) {
+    const prev = this.dirtyAssignment.get(full)!;
+    this.addError(
+      { line } as any,
+      `Redundant assignment: value assigned to '${name}' on line ${prev.line} was overwritten before being used.`,
+      'warning',
+    );
+  }
+  this.dirtyAssignment.set(full, { line, overwritten: true });
+}
 
   private markRead(name: string): void {
     const full = this.getFullyScopedName(name);

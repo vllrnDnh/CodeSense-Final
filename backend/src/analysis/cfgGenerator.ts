@@ -202,41 +202,43 @@ export class CFGGenerator {
   }
 
   private visit(node: ASTNode, current: ControlFlowNode, exit: ControlFlowNode): ControlFlowNode {
-    if (!node) return current;
+  if (!node) return current;
 
-    // Explicit type guards for stream statements (no method-name dispatch)
-    if (node.type === 'CoutStatement') return this.visitCoutStatement(node as any, current);
-    if (node.type === 'CinStatement')  return this.visitCinStatement(node as any, current);
+  if (node.type === 'CoutStatement') return this.visitCoutStatement(node as any, current);
+  if (node.type === 'CinStatement')  return this.visitCinStatement(node as any, current);
 
-    const methodName = `visit${node.type}`;
-    if (typeof (this as any)[methodName] === 'function') {
-      return (this as any)[methodName](node, current, exit);
-    }
-
-    // Fallback: iterate body/statements arrays
-    const anyNode = node as any;
-    let lastNode = current;
-    if (Array.isArray(anyNode.body)) {
-      anyNode.body.forEach((stmt: ASTNode) => {
-        lastNode = this.visit(stmt, lastNode, exit);
-      });
-    } else if (Array.isArray(anyNode.statements)) {
-      anyNode.statements.forEach((stmt: ASTNode) => {
-        lastNode = this.visit(stmt, lastNode, exit);
-      });
-    }
-    return lastNode;
+  const methodName = `visit${node.type}`;
+  if (typeof (this as any)[methodName] === 'function') {
+    return (this as any)[methodName](node, current, exit);
   }
+
+  // Fallback — but ONLY if no method matched (prevents double-visit)
+  const anyNode = node as any;
+  let lastNode = current;
+  if (Array.isArray(anyNode.body)) {
+    anyNode.body.forEach((stmt: ASTNode) => {
+      lastNode = this.visit(stmt, lastNode, exit);
+    });
+  } else if (Array.isArray(anyNode.statements)) {
+    anyNode.statements.forEach((stmt: ASTNode) => {
+      lastNode = this.visit(stmt, lastNode, exit);
+    });
+  }
+  return lastNode;
+}
 
   // ── Program ───────────────────────────────────────────────────────────────
   private visitProgram(node: any, current: ControlFlowNode, exit: ControlFlowNode): ControlFlowNode {
-    let lastNode = current;
-    (node.body || []).forEach((stmt: ASTNode) => {
-      lastNode = this.visit(stmt, lastNode, exit);
-    });
+  let lastNode = current;
+  (node.body || []).forEach((stmt: ASTNode) => {
+    lastNode = this.visit(stmt, lastNode, exit);
+  });
+  // MISSING: connect last node to exit
+  if (lastNode !== exit) {
     this.connect(lastNode, exit);
-    return exit;
   }
+  return exit;
+}
 
   // ── If ────────────────────────────────────────────────────────────────────
   private visitIfStatement(

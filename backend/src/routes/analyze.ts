@@ -324,15 +324,15 @@ const STDLIB_NAMES = new Set([
 function filterUserSymbols(symbolTable: Record<string, any>): Record<string, any> {
   const result: Record<string, any> = {};
   for (const [key, sym] of Object.entries(symbolTable)) {
-    // Skip line-0 entries (all stdlib symbols are pre-registered at line 0)
-    if ((sym.line ?? 0) === 0) continue;
-    // Skip known stdlib names regardless of line number
     const shortName = (key.split('::').pop() ?? key) as string;
-    if (STDLIB_NAMES.has(shortName)) continue;
+    // Only skip if BOTH line is 0 AND it's a known stdlib name
+    if ((sym.line ?? 0) === 0 && STDLIB_NAMES.has(shortName)) continue;
+    if (STDLIB_NAMES.has(shortName) && sym.scope === 'global') continue;
     result[key] = sym;
   }
   return result;
 }
+
 
 // ---------------------------------------------------------------------------
 // Helper: convert the symbol table into SymbolicEntry[] for the Math tab

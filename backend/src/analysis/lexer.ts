@@ -58,7 +58,7 @@ const TOKEN_PATTERNS: Array<{ type: Token['type']; pattern: RegExp }> = [
   { type: 'Literal', pattern: /^[0-9]+\.[0-9]+([eE][+-]?[0-9]+)?[fFlL]?/ },
 
   // 12. Integer literals (with optional ULL/UL/LL/U/L suffix)
-  { type: 'Literal', pattern: /^[0-9]+([eE][+-]?[0-9]+)?[uU]?[lL]{0,2}/ },
+  { type: 'Literal', pattern: /^[0-9]+[uU]?[lL]{0,2}/ },
 
   // 13. Char literals — all standard C++ escape sequences
   { type: 'Literal', pattern: /^'(\\(?:[abfnrtvx\\'"?0]|[0-7]{1,3}|x[0-9a-fA-F]{1,2})|[^'\\])'/ },
@@ -134,8 +134,7 @@ export function tokenize(sourceCode: string): LexerResult {
 
   // Phase 0: collect and expand macros
   const macros = buildMacroTable(sourceCode);
-  const workingSource = expandMacros(sourceCode, macros);
-
+const workingSource = sourceCode;
   let line   = 1;
   let column = 1;
   let pos    = 0;
