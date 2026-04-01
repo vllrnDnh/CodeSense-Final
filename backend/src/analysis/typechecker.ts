@@ -306,13 +306,25 @@ export class TypeChecker {
     this.enterScope(func.name);
 
     func.params.forEach((param: ParameterNode) => {
-      if (!param.name) {
-        this.addError(node, `Function '${func.name}': unnamed parameters are not allowed in definitions`, 'error');
-        return;
-      }
-      this.addSymbol(param.name, param.varType, param.line || 0, true, undefined, true, 'parameter');
-      this.markRead(param.name); // implicit usage credit
-    });
+  if (!param.name) {
+    this.addError(node, `Function '${func.name}': unnamed parameters are not allowed in definitions`, 'error');
+    return;
+  }
+
+  // 1. Register the symbol as a parameter
+  this.addSymbol(param.name, param.varType, param.line || 0, true, undefined, true, 'parameter');
+
+  // 2. Track the initial "Write" from the caller. 
+  // We don't call markRead yet because the function body hasn't actually used it.
+  const fullKey = `${this.currentScope}::${param.name}`;
+  
+  // We set 'overwritten: false' to indicate it has a value from the caller, 
+  // but it hasn't been replaced by an internal assignment yet.
+  this.dirtyAssignment.set(fullKey, { 
+    line: param.line || func.line || 0, 
+    overwritten: false 
+  });
+});
 
     if (Array.isArray(func.body)) {
       let returnSeen = false;
@@ -328,17 +340,24 @@ export class TypeChecker {
     // Strict return enforcement — now uses multi-path allPathsReturn()
     if (func.name === 'main') {
       if (func.returnType !== 'int') {
-        this.addError(node, "Strict Error: 'main' must have return type 'int'", 'error');
+        this.addError(node, "C++ Standard: 'main' must have return type 'int'", 'error');
       }
       if (!this.functionHasTopLevelReturn && !this.allPathsReturn(func.body || [])) {
         this.addError(node, "Strict Error: 'main' must explicitly 'return 0;'", 'error');
       }
-    } else if (func.returnType !== 'void') {
+    } if (!this.functionHasTopLevelReturn && !this.allPathsReturn(func.body || [])) {
+        this.addError(
+          node,
+          "Style Hint: While 'main' implicitly returns 0, explicitly writing 'return 0;' is better practice.", 
+          'warning'
+        );
+      }else if (func.returnType !== 'void') {
+      // Normal functions MUST return a value if they aren't void
       if (!this.functionHasTopLevelReturn && !this.allPathsReturn(func.body || [])) {
         this.addError(
           node,
-          `Not all paths in function '${func.name}' return a value (return type: '${func.returnType}')`,
-          'error',
+          `Semantic Error: Not all paths in function '${func.name}' return a value (expects '${func.returnType}').`,
+          'error'
         );
       }
     }
@@ -382,16 +401,18 @@ export class TypeChecker {
     return varNode.varType;
   }
 
+  // Multi-declaration support (e.g., int x, y, z;)
+  private visitMultipleVariableDecl(node: any): string | null {
+    let lastType: string | null = null;
+    (node.declarations || []).forEach((decl: ASTNode) => {
+      lastType = this.visitVariableDecl(decl);
+    });
+    return lastType;
+  }
+
   // =========================================================================
   // Array Access
   // =========================================================================
-  private visitMultipleVariableDecl(node: any): string | null {
-  let lastType: string | null = null;
-  (node.declarations || []).forEach((decl: ASTNode) => {
-    lastType = this.visitVariableDecl(decl);
-  });
-  return lastType;
-}
 
   private visitArrayAccess(node: ASTNode): string | null {
     const arr = node as ArrayAccessNode;
@@ -1200,21 +1221,18 @@ export class TypeChecker {
   const full = this.getFullyScopedName(name);
   if (!full) return;
   
-  // NEW: Don't flag first write to parameters as redundant
   const sym = this.symbolTable[full];
-  if (sym && (sym as any).kind === 'parameter') {
-    this.dirtyAssignment.set(full, { line, overwritten: true });
-    return;
-  }
-  
+  const isParameter = sym && (sym as any).kind === 'parameter';
+
   if (this.dirtyAssignment.has(full)) {
     const prev = this.dirtyAssignment.get(full)!;
     this.addError(
       { line } as any,
-      `Redundant assignment: value assigned to '${name}' on line ${prev.line} was overwritten before being used.`,
+      `Redundant assignment: Value in '${name}' ${isParameter ? '(passed as argument) ' : ''}was overwritten on line ${line} before being used.`,
       'warning',
     );
   }
+  
   this.dirtyAssignment.set(full, { line, overwritten: true });
 }
 

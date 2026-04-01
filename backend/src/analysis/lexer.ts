@@ -24,64 +24,26 @@ export interface LexerResult {
 // Token pattern table — ORDER IS CRITICAL (first match wins, loop breaks)
 // ---------------------------------------------------------------------------
 const TOKEN_PATTERNS: Array<{ type: Token['type']; pattern: RegExp }> = [
-
-  // 1. Block comments
-  { type: 'Comment', pattern: /^\/\*[\s\S]*?\*\// },
-  // 2. Line comments
-  { type: 'Comment', pattern: /^\/\/[^\n]*/ },
-
-  // 3. Preprocessor directives
-  { type: 'Keyword', pattern: /^#\s*(include|define|undef|ifdef|ifndef|endif|elif|if|else|pragma|error|warning|line)\b/ },
-
-  // 4. All C++ reserved keywords
-  { type: 'Keyword', pattern: /^(auto|bool|break|case|catch|char|class|const|continue|default|delete|do|double|else|enum|explicit|extern|false|final|float|for|friend|goto|if|inline|int|long|mutable|namespace|new|nullptr|operator|override|private|protected|public|register|return|short|signed|sizeof|static|string|struct|switch|template|this|throw|true|try|typedef|typename|union|unsigned|using|virtual|void|volatile|while)\b/ },
-
-  // 5. Raw string literals  R"TAG(...)TAG"  (must come before regular strings)
-  { type: 'Literal', pattern: /^(?:u8|u|U|L)?R"([^(]*)\([\s\S]*?\)\1"/ },
-
-  // 6. Wide/unicode string literals  L"..."  u"..."  U"..."  u8"..."
-  { type: 'Literal', pattern: /^(?:u8|u|U|L)"(\\(?:[abfnrtvx\\'"?\n0]|[0-7]{1,3}|x[0-9a-fA-F]{1,2})|[^"\\])*"/ },
-
-  // 7. Wide/unicode char literals  L'x'  u'x'  U'x'
-  { type: 'Literal', pattern: /^(?:u|U|L)'(\\(?:[abfnrtvx\\'"?0]|[0-7]{1,3}|x[0-9a-fA-F]{1,2})|[^'\\])'/ },
-
-  // 8. Binary integer literals 0b… / 0B…
-  { type: 'Literal', pattern: /^0[bB][01]+[uUlL]{0,3}/ },
-
-  // 9. Hex integer literals (MUST come before decimal)
-  { type: 'Literal', pattern: /^0[xX][0-9a-fA-F]+[uUlL]{0,3}/ },
-
-  // 10. Octal integer literals  0[0-7]+
-  { type: 'Literal', pattern: /^0[0-7]+[uUlL]{0,3}/ },
-
-  // 11. Floating-point literals (with optional exponent and suffix)
-  { type: 'Literal', pattern: /^[0-9]+\.[0-9]+([eE][+-]?[0-9]+)?[fFlL]?/ },
-
-  // 12. Integer literals (with optional ULL/UL/LL/U/L suffix)
-  { type: 'Literal', pattern: /^[0-9]+[uU]?[lL]{0,2}/ },
-
-  // 13. Char literals — all standard C++ escape sequences
-  { type: 'Literal', pattern: /^'(\\(?:[abfnrtvx\\'"?0]|[0-7]{1,3}|x[0-9a-fA-F]{1,2})|[^'\\])'/ },
-
-  // 14. String literals — all escape sequences
-  { type: 'Literal', pattern: /^"(\\(?:[abfnrtvx\\'"?\n0]|[0-7]{1,3}|x[0-9a-fA-F]{1,2})|[^"\\])*"/ },
-
-  // 15. Known stdlib identifiers
-  { type: 'Identifier', pattern: /^(cout|cin|cerr|clog|endl|getline|fixed|setprecision|setw|setfill|showpoint|left|right|boolalpha|noboolalpha|pow|sqrt|abs|fabs|ceil|floor|round|fmod|log|log2|log10|exp|sin|cos|tan|asin|acos|atan|atan2|system|exit|rand|srand|stoi|stod|stof|stol|stoul|to_string|ifstream|ofstream|fstream|size_t|nullptr_t)\b/ },
-
-  // 16. Generic identifier
-  { type: 'Identifier', pattern: /^[a-zA-Z_][a-zA-Z0-9_]*/ },
-
-  // 17. Compound operators — LONGEST MATCH FIRST (3-char)
-  { type: 'Operator', pattern: /^(<<=|>>=)/ },
-  // 2-char
-  { type: 'Operator', pattern: /^(->|::|==|!=|<=|>=|&&|\|\||\+\+|--|<<|>>|\+=|-=|\*=|\/=|%=|&=|\|=|\^=)/ },
-
-  // 18. Single-char operators
-  { type: 'Operator', pattern: /^[+\-*\/%=<>!&|^~?:.]/ },
-
-  // 19. Separators
-  { type: 'Separator', pattern: /^[(){}\[\];,]/ },
+  { type: 'Comment',    pattern: /\/\*[\s\S]*?\*\//y },
+  { type: 'Comment',    pattern: /\/\/[^\n]*/y },
+  { type: 'Keyword',    pattern: /#\s*(include|define|undef|ifdef|ifndef|endif|elif|if|else|pragma|error|warning|line)\b/y },
+  { type: 'Keyword',    pattern: /(auto|bool|break|case|catch|char|class|const|continue|default|delete|do|double|else|enum|explicit|extern|false|final|float|for|friend|goto|if|inline|int|long|mutable|namespace|new|nullptr|operator|override|private|protected|public|register|return|short|signed|sizeof|static|string|struct|switch|template|this|throw|true|try|typedef|typename|union|unsigned|using|virtual|void|volatile|while)\b/y },
+  { type: 'Literal',    pattern: /(?:u8|u|U|L)?R"([^(]*)\([\s\S]*?\)\1"/y },
+  { type: 'Literal',    pattern: /(?:u8|u|U|L)"(\\(?:[abfnrtvx\\'"?\n0]|[0-7]{1,3}|x[0-9a-fA-F]{1,2})|[^"\\])*"/y },
+  { type: 'Literal',    pattern: /(?:u|U|L)'(\\(?:[abfnrtvx\\'"?0]|[0-7]{1,3}|x[0-9a-fA-F]{1,2})|[^'\\])'/y },
+  { type: 'Literal',    pattern: /0[bB][01]+[uUlL]{0,3}/y },
+  { type: 'Literal',    pattern: /0[xX][0-9a-fA-F]+[uUlL]{0,3}/y },
+  { type: 'Literal',    pattern: /0[0-7]+[uUlL]{0,3}/y },
+  { type: 'Literal',    pattern: /(?:[0-9]*\.[0-9]+|[0-9]+\.)(?:[eE][+-]?[0-9]+)?[fFlL]?/y },
+  { type: 'Literal',    pattern: /[0-9]+[uU]?[lL]{0,2}/y },
+  { type: 'Literal',    pattern: /'(\\(?:[abfnrtvx\\'"?0]|[0-7]{1,3}|x[0-9a-fA-F]{1,2})|[^'\\])'/y },
+  { type: 'Literal',    pattern: /"(\\(?:[abfnrtvx\\'"?\n0]|[0-7]{1,3}|x[0-9a-fA-F]{1,2})|[^"\\])*"/y },
+  { type: 'Identifier', pattern: /(cout|cin|cerr|clog|endl|getline|fixed|setprecision|setw|setfill|showpoint|left|right|boolalpha|noboolalpha|pow|sqrt|abs|fabs|ceil|floor|round|fmod|log|log2|log10|exp|sin|cos|tan|asin|acos|atan|atan2|system|exit|rand|srand|stoi|stod|stof|stol|stoul|to_string|ifstream|ofstream|fstream|size_t|nullptr_t)\b/y },
+  { type: 'Identifier', pattern: /[a-zA-Z_][a-zA-Z0-9_]*/y },
+  { type: 'Operator',   pattern: /(<<=|>>=)/y },
+  { type: 'Operator',   pattern: /(->|::|==|!=|<=|>=|&&|\|\||\+\+|--|<<|>>|\+=|-=|\*=|\/=|%=|&=|\|=|\^=)/y },
+  { type: 'Operator',   pattern: /[+\-*\/%=<>!&|^~?:.]/y },
+  { type: 'Separator',  pattern: /[(){}\[\];,]/y },
 ];
 
 // ---------------------------------------------------------------------------
@@ -128,13 +90,16 @@ function expandMacros(sourceCode: string, macros: MacroTable): string {
 // ---------------------------------------------------------------------------
 // Main tokenize function
 // ---------------------------------------------------------------------------
+
+const wsRegex = /[ \t]+/y;
+
 export function tokenize(sourceCode: string): LexerResult {
   const tokens: Token[] = [];
   const errors: Array<{ message: string; line: number; column: number }> = [];
 
   // Phase 0: collect and expand macros
   const macros = buildMacroTable(sourceCode);
-const workingSource = sourceCode;
+  const workingSource = expandMacros(sourceCode, macros);
   let line   = 1;
   let column = 1;
   let pos    = 0;
@@ -142,10 +107,13 @@ const workingSource = sourceCode;
   while (pos < workingSource.length) {
 
     // Horizontal whitespace
-    const wsMatch = workingSource.slice(pos).match(/^[ \t]+/);
+
+    wsRegex.lastIndex = pos;
+    const wsMatch = wsRegex.exec(workingSource);
+    
     if (wsMatch) {
       column += wsMatch[0].length;
-      pos    += wsMatch[0].length;
+      pos += wsMatch[0].length;
       continue;
     }
 
@@ -165,33 +133,42 @@ const workingSource = sourceCode;
     }
 
     // Try every token pattern in order
+    // Replace your entire for...of loop and the "Nothing matched" block with this:
     let matched = false;
+
     for (const { type, pattern } of TOKEN_PATTERNS) {
-      const remaining = workingSource.slice(pos);
-      const match     = remaining.match(pattern);
+      // 1. Point the regex to look exactly at the current position
+      pattern.lastIndex = pos;
+
+      // 2. Use .exec() instead of .match(). 
+      // Because of the 'y' flag, it only checks the string at exactly 'pos'
+      const match = pattern.exec(workingSource);
+
       if (!match) continue;
 
       const value = match[0];
 
-      // Comments are consumed but NOT pushed into the token stream
+      // 3. Keep your original logic for Comments
       if (type !== 'Comment') {
         tokens.push({ type, value, line, column });
       }
 
-      // Advance — block comments / raw strings may span multiple lines
+      // 4. Efficiently handle multi-line tokens (raw strings, block comments)
       const parts = value.split('\n');
       if (parts.length > 1) {
-        line  += parts.length - 1;
+        line += parts.length - 1;
         column = parts[parts.length - 1].length + 1;
       } else {
         column += value.length;
       }
-      pos    += value.length;
+
+      // 5. Update the master position
+      pos += value.length;
       matched = true;
       break;
     }
 
-    // Nothing matched — record error and advance one char
+    // 6. Error handling for unknown characters
     if (!matched) {
       const ch = workingSource[pos];
       errors.push({
@@ -199,13 +176,12 @@ const workingSource = sourceCode;
         line,
         column,
       });
-      column++;
       pos++;
+      column++;
     }
   }
-
-  return { tokens, errors };
-}
+  return { tokens, errors }; 
+} 
 
 // ---------------------------------------------------------------------------
 // Utility helpers

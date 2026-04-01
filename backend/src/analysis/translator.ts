@@ -33,10 +33,12 @@ export class Translator {
   private currentFunctionName: string = '';
 
   private cleanName(name: any): string {
-    if (!name) return 'unknown';
-    const flatName = Array.isArray(name) ? name.flat(Infinity).join('') : String(name);
-    return flatName.replace(/,/g, '').trim();
-  }
+  if (!name) return 'unknown';
+  if (typeof name === 'string') return name;
+  if (name.type === 'Identifier') return name.name;
+  if (Array.isArray(name)) return name.map(n => this.cleanName(n)).join('');
+  return String(name);
+}
 
   private indent(): string {
     return '  '.repeat(this.indentLevel);
@@ -114,30 +116,40 @@ export class Translator {
 
   private visitVariableDecl(node: VariableDeclNode): void {
     const name = this.cleanName(node.name);
-    const isConst  = Array.isArray((node as any).modifiers) && (node as any).modifiers.includes('const');
-    const isPtr    = node.varType.includes('*');
-    const isArray  = node.dimensions && node.dimensions.length > 0;
+    const isConst = Array.isArray((node as any).modifiers) && (node as any).modifiers.includes('const');
+    const isPtr   = node.varType.includes('*');
+    const isArray = node.dimensions && node.dimensions.length > 0;
 
+    // 1. Identify the "Storage Type"
     if (isConst) {
-      this.explanations.push(`${this.indent()}❄️ **Frozen Value (Constant): '${name}'** (type: ${node.varType})`);
-      this.explanations.push(`${this.indent()}   Frozen — its value can NEVER change after initialization.`);
+      this.explanations.push(`${this.indent()}❄️ **Constant (Frozen): '${name}'** (type: ${node.varType})`);
+      this.explanations.push(`${this.indent()}   This value is locked! It cannot be changed after this line.`);
     } else if (isPtr) {
       this.explanations.push(`${this.indent()}📌 **Pointer: '${name}'** (type: ${node.varType})`);
-      this.explanations.push(`${this.indent()}   Stores a memory address, not a direct value.`);
+      this.explanations.push(`${this.indent()}   This doesn't store data directly; it stores a **memory address** (like a GPS coordinate) pointing to data elsewhere.`);
     } else if (isArray) {
       const size = node.dimensions?.[0] ? this.formatExpr(node.dimensions[0]) : '?';
       this.explanations.push(`${this.indent()}📦 **Array: '${name}[${size}]'** (element type: ${node.varType})`);
-      this.explanations.push(`${this.indent()}   Like a row of ${size} numbered boxes, each storing one ${node.varType}.`);
+      this.explanations.push(`${this.indent()}   Like a row of ${size} numbered lockers, each holding one ${node.varType}.`);
+      this.explanations.push(`${this.indent()}   💡 *Mentor Tip: Remember that C++ starts counting at locker [0]!*`);
     } else {
-      this.explanations.push(`${this.indent()}📦 **Declare a ${node.varType} variable named '${name}'**`);
+      this.explanations.push(`${this.indent()}📦 **Variable: '${name}'** (type: ${node.varType})`);
     }
 
+    // 2. Handle Initialization (The "Value" part)
     if (node.value) {
       const valueStr = this.formatExpr(node.value);
-      this.explanations.push(`${this.indent()}   Starting value: ${valueStr}`);
+      this.explanations.push(`${this.indent()}   ✨ **Initialization:** The box is starting with the value: ${valueStr}`);
     } else {
-      this.explanations.push(`${this.indent()}   ⚠️  No starting value — box is empty (uninitialized)!`);
+      // Logic for uninitialized variables - a major source of C++ bugs
+      this.explanations.push(`${this.indent()}   ⚠️ **Warning: Uninitialized!**`);
+      this.explanations.push(`${this.indent()}   The box '${name}' is currently empty. In C++, it will contain "garbage data" (random leftovers in memory) until you assign it a value.`);
+      
+      if (isPtr) {
+        this.explanations.push(`${this.indent()}   🛑 **DANGER:** Uninitialized pointers are risky. It's safer to set this to 'nullptr'!`);
+      }
     }
+
     this.explanations.push('');
   }
 
@@ -264,8 +276,10 @@ export class Translator {
 
   private visitWhileLoop(node: WhileLoopNode): void {
     const condition = this.formatExpr(node.condition);
-    this.explanations.push(`${this.indent()}🔁 **While Loop**`);
-    this.explanations.push(`${this.indent()}   Keep repeating as long as: ${condition}`);
+    this.explanations.push(`${this.indent()}🔁 **The "Loop-De-Loop" (While Loop)**`);
+    this.explanations.push(`${this.indent()}   1. First, I check: Is **${condition}** true?`);
+    this.explanations.push(`${this.indent()}   2. If YES, I run the code inside.`);
+    this.explanations.push(`${this.indent()}   3. Then I come right back here to check again!`);
     this.explanations.push(`${this.indent()}   💡 Like "Keep stirring while the sauce is lumpy"`);
     this.explanations.push('');
 
@@ -370,6 +384,7 @@ export class Translator {
     const indices = node.indices.map(i => this.formatExpr(i)).join('][');
     this.explanations.push(`${this.indent()}🔍 **Read Array Element: ${name}[${indices}]**`);
     this.explanations.push(`${this.indent()}   Accessing box number ${indices} inside '${name}'.`);
+    this.explanations.push(`${this.indent()}   💡 Remember: C++ counts from **0**. So [0] is the 1st element, and [1] is the 2nd!`);
     this.explanations.push('');
   }
 
@@ -485,11 +500,10 @@ export class Translator {
   }
 
   private visitAddressOf(node: UnaryOpNode): void {
-    const v = this.cleanName(node.operand);
-    this.explanations.push(`${this.indent()}📍 **&${v}** — Get the memory address of '${v}'`);
-    this.explanations.push(`${this.indent()}   Like finding which shelf a book is on, not the book itself.`);
-    this.explanations.push('');
-  }
+  const v = this.cleanName(node.operand);
+  this.explanations.push(`${this.indent()}📍 **&${v}** — Finding the Address`);
+  this.explanations.push(`${this.indent()}   Instead of looking at what's inside '${v}', we are looking for its coordinates in memory (like a GPS location).`);
+}
 
   private visitDereference(node: UnaryOpNode): void {
     const v = this.cleanName(node.operand);
@@ -507,9 +521,29 @@ export class Translator {
 
     switch (node.type) {
       case 'BinaryOp': {
-        const left  = this.formatExpr(node.left);
+        const left = this.formatExpr(node.left);
         const right = this.formatExpr(node.right);
-        return `(${left} ${node.operator} ${right})`;
+        let note = '';
+
+        // 1. Map symbols to human-friendly words
+        const opMap: Record<string, string> = { 
+          '&&': 'AND', 
+          '||': 'OR', 
+          '==': 'is equal to',
+          '!=': 'is NOT equal to',
+          '<':  'is less than',
+          '>':  'is greater than',
+          '<=': 'is less than or equal to',
+          '>=': 'is greater than or equal to'
+        };
+        const opLabel = opMap[node.operator] || node.operator;
+
+        // 2. Check for the integer division pitfall
+        if (node.operator === '/' && node.left.type === 'Integer' && node.right.type === 'Integer') {
+          note = ' 💡 (Note: Integer division cuts off decimals!)';
+        }
+
+        return `(${left} ${opLabel} ${right})${note}`;
       }
       case 'Identifier':
         return this.cleanName(node.name);

@@ -251,8 +251,13 @@ router.post('/analyze', (req, res) => {
     catch (scoreErr: any) { console.error('⚠️ Cyclomatic Scoring Error:', scoreErr?.message); }
 
     // ─── PHASE 10: Gamification ──────────────────────────────────────────────
-    const gameEngine = new GameEngine();
-    const { currentLevel = 1 } = req.body;  // caller sends actual user level
+     const gameEngine = new GameEngine();
+     const rawLevel = req.body.currentLevel;
+      const currentLevel: 1 | 2 | 3 | 4 =
+    rawLevel === 2 ? 2
+    : rawLevel === 3 ? 3
+    : rawLevel === 4 ? 4
+    : 1;  // caller sends actual user level
     const reward = gameEngine.calculateReward(
       {
         cognitiveComplexity: complexityScore,

@@ -841,23 +841,33 @@ const finalVal: SymbolicValue = allDims.length > 0
   // FIX 15: visitIdentifier — check initialized set for uninitialized access
   // ==========================================================================
   private visitIdentifier(node: any): SymbolicValue {
-  const val = this.state.variables.get(node.name);
-  
-  if (!val && !this.state.initialized.has(node.name)) {
-    // Check if it's a known standard library symbol
-    const stdSymbols = ['cout', 'cin', 'endl', 'cerr', 'string'];
-    if (!stdSymbols.includes(node.name)) {
-      this.addSafetyCheck(
-        (node as any).line || 0,
-        'uninitialized',
-        'WARNING',
-        `Variable '${node.name}' may be used before initialization`
-      );
+    const val = this.state.variables.get(node.name);
+
+    if (!val && !this.state.initialized.has(node.name)) {
+      const stdSymbols = new Set([
+        'cout', 'cin', 'endl', 'cerr', 'clog', 'string',
+        'true', 'false', 'nullptr',
+        'setw', 'setprecision', 'setfill', 'fixed', 'showpoint',
+        'left', 'right', 'boolalpha', 'noboolalpha',
+        'pow', 'sqrt', 'abs', 'fabs', 'ceil', 'floor', 'round',
+        'stoi', 'stod', 'stof', 'stol', 'stoul', 'to_string',
+        'ifstream', 'ofstream', 'fstream',
+        'rand', 'srand', 'exit', 'system', 'getline',
+        'INT_MAX', 'INT_MIN', 'LLONG_MAX', 'LLONG_MIN',
+        'EOF', 'NULL',
+      ]);
+      if (!stdSymbols.has(node.name)) {
+        this.addSafetyCheck(
+          (node as any).line || 0,
+          'uninitialized',
+          'WARNING',
+          `Variable '${node.name}' may be used before initialization`
+        );
+      }
     }
+
+    return val ?? { type: 'unknown' as const };
   }
-  
-  return val ?? { type: 'unknown' as const };
-}
 
   // ==========================================================================
   // PATH CONSTRAINTS

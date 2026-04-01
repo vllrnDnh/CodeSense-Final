@@ -48,7 +48,20 @@ export class CFGGenerator {
     const startNode = this.createNode('start', 'Start');
     const endNode   = this.createNode('end', 'End');
 
-    this.visit(ast, startNode, endNode);
+    // The visit method returns the last logical node processed in the AST
+    const lastNode = this.visit(ast, startNode, endNode);
+
+    // Final safety connection: Ensures the graph doesn't have "dangling" end statements
+    if (lastNode && lastNode.id !== endNode.id) {
+      const alreadyConnected = this.edges.some(
+        e => e.from === lastNode.id && e.to === endNode.id
+      );
+      
+      if (!alreadyConnected) {
+        this.connect(lastNode, endNode);
+      }
+    }
+
     this.applySugiyamaLayout();
 
     return { nodes: this.nodes, edges: this.edges };
@@ -234,10 +247,7 @@ export class CFGGenerator {
     lastNode = this.visit(stmt, lastNode, exit);
   });
   // MISSING: connect last node to exit
-  if (lastNode !== exit) {
-    this.connect(lastNode, exit);
-  }
-  return exit;
+  return lastNode;
 }
 
   // ── If ────────────────────────────────────────────────────────────────────
