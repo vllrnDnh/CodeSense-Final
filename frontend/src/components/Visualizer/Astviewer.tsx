@@ -1,5 +1,16 @@
 import { useState } from 'react';
 
+
+function flattenStreamChain(node: any): string {
+  if (!node) return '';
+  // If it's a nested BinaryOp (the new structure), recurse through both sides
+  if (node.type === 'BinaryOp' && (node.operator === '<<' || node.operator === '>>')) {
+    return `${flattenStreamChain(node.left)} ${node.operator} ${describeValue(node.right)}`;
+  }
+  // Otherwise, it's the leaf (like cout or a variable), describe it normally
+  return describeValue(node);
+}
+
 // ─── Friendly label maps ──────────────────────────────────────────────────────
 const NODE_LABELS: Record<string, { label: string; icon: string; color: string }> = {
   Program:             { label: 'Program',            icon: '📄', color: '#58a6ff' },
@@ -64,7 +75,7 @@ function describeNode(node: any): string {
     case 'ReturnStatement':
       return node.value ? `exits the function and returns ${describeValue(node.value)}` : `exits the function`;
     case 'CoutStatement':
-      return `prints ${node.values?.map(describeValue).join(' then ') ?? 'something'} to the screen`;
+      return `prints ${flattenStreamChain(node.values)} to the screen`;
     case 'CinStatement':
       return `reads input from the user`;
     case 'FunctionCall':
@@ -218,7 +229,7 @@ function getShortLabel(node: any): string {
     case 'Assignment':      return `${typeof node.target === 'string' ? node.target : node.target?.name ?? '?'} ${node.operator} ${describeValue(node.value)}`;
     case 'BinaryOp':        return `${describeValue(node.left)} ${node.operator} ${describeValue(node.right)}`;
     case 'ReturnStatement': return node.value ? `return ${describeValue(node.value)}` : 'return';
-    case 'CoutStatement':   return `print: ${node.values?.map(describeValue).join(', ') ?? ''}`;
+    case 'CoutStatement':   return `print: ${flattenStreamChain(node.values)}`;
     case 'FunctionCall':    return `${node.name}(${node.arguments?.length ?? 0} args)`;
     case 'WhileLoop':       return `while (${describeValue(node.condition)})`;
     case 'IfStatement':     return `if (${describeValue(node.condition)})`;

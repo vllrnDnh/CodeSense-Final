@@ -461,6 +461,12 @@ const finalVal: SymbolicValue = allDims.length > 0
   }
 
   private visitBinaryOp(node: BinaryOpNode): SymbolicValue {
+
+    if (node.operator === '<<' || node.operator === '>>') {
+        this.visit(node.left);
+        this.visit(node.right);
+        return { type: 'unknown' as const };
+    }
     const leftRaw  = this.visit(node.left);
     const rightRaw = this.visit(node.right);
 
@@ -833,9 +839,12 @@ const finalVal: SymbolicValue = allDims.length > 0
   }
 
   private visitCoutStatement(node: any): SymbolicValue {
-    (node.values || []).forEach((e: ASTNode) => this.visit(e));
+    // node.values is now the root of the BinaryOp tree (e.g., cout << "hello")
+    if (node.values) {
+        this.visit(node.values);
+    }
     return { type: 'unknown' as const };
-  }
+}
 
   // ==========================================================================
   // FIX 15: visitIdentifier — check initialized set for uninitialized access

@@ -73,6 +73,8 @@ app.get('/', (req, res) => {
 app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
     console.error(`🔥 Backend Error Caught: ${err.message}`);
 
+    console.error("DEBUG FULL ERROR:", err);
+
     const isSyntactic = err.name === 'SyntaxError' || err.message.includes('Expected');
 
     res.status(200).json({

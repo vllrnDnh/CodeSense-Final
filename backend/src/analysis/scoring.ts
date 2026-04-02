@@ -50,6 +50,7 @@ export class CognitiveComplexity {
     if (!node || typeof node !== 'object') return;
     node.parent = parent;
     for (const key in node) {
+      if (key === 'parent') continue;
       if (Object.prototype.hasOwnProperty.call(node, key)) {
         const child = node[key];
         if (Array.isArray(child)) {
@@ -372,6 +373,7 @@ export class CyclomaticComplexity {
 
     // High-performance recursion
     for (const key in node) {
+      if (key === 'parent') continue;
       if (Object.prototype.hasOwnProperty.call(node, key)) {
         const child = node[key];
         if (Array.isArray(child)) {

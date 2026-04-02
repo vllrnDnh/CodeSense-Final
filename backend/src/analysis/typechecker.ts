@@ -113,13 +113,23 @@ export class TypeChecker {
   private initializeStandardLibrary(): void {
     const ioSymbols: Array<[string, string]> = [
       ['cout', 'ostream'], ['cin', 'istream'], ['cerr', 'ostream'],
-      ['clog', 'ostream'], ['endl', 'manipulator'],
+      ['clog', 'ostream'], 
     ];
     ioSymbols.forEach(([name, type]) => {
       this.symbolTable[`global::${name}`] = {
         name, type, line: 0, scope: 'global', initialized: true, isDefined: true, kind: 'variable',
       };
     });
+
+    this.symbolTable['global::endl'] = {
+    name: 'endl', 
+    type: 'ostream', 
+    line: 0, 
+    scope: 'global', 
+    initialized: true, 
+    isDefined: true, 
+    kind: 'variable',
+  };
 
     ['setw', 'setprecision', 'setfill', 'fixed', 'showpoint', 'left', 'right',
       'boolalpha', 'noboolalpha'].forEach(m => {
@@ -441,7 +451,16 @@ export class TypeChecker {
         }
       }
     });
-    return symbol.type;
+    let resultingType = symbol.type;
+  for (let i = 0; i < arr.indices.length; i++) {
+    if (resultingType.endsWith('*')) {
+      resultingType = resultingType.slice(0, -1).trim();
+    } else if (resultingType.endsWith(']')) {
+      // Handle cases where type might be stored as 'int[10]'
+      resultingType = resultingType.split('[')[0].trim();
+    }
+  }
+    return resultingType;
   }
 
   // =========================================================================
@@ -869,74 +888,69 @@ export class TypeChecker {
   // Binary Operations
   // =========================================================================
   private visitBinaryOp(node: ASTNode): string | null {
-    const bin = node as BinaryOpNode;
-    const leftType = this.visit(bin.left);
-    const rightType = this.visit(bin.right);
+  const bin = node as BinaryOpNode;
+  const leftType = this.visit(bin.left);
+  const rightType = this.visit(bin.right);
 
-    if (!leftType || !rightType) return null;
+  if (!leftType || !rightType) return null;
 
-    if (['+', '-', '*', '/', '%'].includes(bin.operator)) {
-      if (bin.operator === '+' && leftType === 'string' && rightType === 'string') {
-        return 'string';
-      }
-      if (bin.operator === '+' && (leftType === 'string' || rightType === 'string')) {
+  // ─── ARITHMETIC OPERATORS ───────────────────────────────────────────────
+  if (['+', '-', '*', '/', '%'].includes(bin.operator)) {
+    if (bin.operator === '+' && leftType === 'string' && rightType === 'string') {
+      return 'string';
+    }
+    if (bin.operator === '+' && (leftType === 'string' || rightType === 'string')) {
+      this.addError(
+        node,
+        `Cannot use '+' between '${leftType}' and '${rightType}'. ` +
+        `Use std::to_string() to convert numbers to strings.`,
+        'error',
+      );
+      return 'string';
+    }
+    if (!this.isNumericType(leftType) || !this.isNumericType(rightType)) {
+      this.addError(
+        node,
+        `Operator '${bin.operator}' requires numeric operands, got '${leftType}' and '${rightType}'`,
+      );
+      return null;
+    }
+    if (bin.operator === '%') {
+      if (!this.isIntegralType(leftType) || !this.isIntegralType(rightType)) {
         this.addError(
           node,
-          `Cannot use '+' between '${leftType}' and '${rightType}'. ` +
-          `Use std::to_string() to convert numbers to strings.`,
+          `Operator '%' is only valid for integer types, got '${leftType}' and '${rightType}'`,
           'error',
         );
-        return 'string';
       }
-      if (!this.isNumericType(leftType) || !this.isNumericType(rightType)) {
-        this.addError(
-          node,
-          `Operator '${bin.operator}' requires numeric operands, got '${leftType}' and '${rightType}'`,
-        );
-        return null;
-      }
-      if (bin.operator === '/') {
-        // Division by zero is handled by the symbolic executor (safetyCheck),
-        // not as a hard semantic error — code after a return or in dead branches
-        // should not block compilation.
-      }
-      if (bin.operator === '%') {
-        if (
-          !['int', 'char', 'long', 'short'].includes(leftType) ||
-          !['int', 'char', 'long', 'short'].includes(rightType)
-        ) {
-          this.addError(
-            node,
-            `Operator '%' is only valid for integer types, got '${leftType}' and '${rightType}'`,
-            'error',
-          );
-        }
-        return 'int';
-      }
-      return this.promoteType(leftType, rightType);
+      return 'int';
     }
+    return this.promoteType(leftType, rightType);
+  }
 
-    if (['<', '>', '<=', '>=', '==', '!='].includes(bin.operator)) {
-      if (!this.isComparable(leftType, rightType)) {
-        this.addError(node, `Cannot compare '${leftType}' with '${rightType}'`);
-      }
-      return 'bool';
+  // ─── COMPARISON OPERATORS ───────────────────────────────────────────────
+  if (['<', '>', '<=', '>=', '==', '!='].includes(bin.operator)) {
+    if (!this.isComparable(leftType, rightType)) {
+      this.addError(node, `Cannot compare '${leftType}' with '${rightType}'`);
     }
+    return 'bool';
+  }
 
-    if (['&&', '||'].includes(bin.operator)) {
-      if (
-        !this.isContextuallyConvertibleToBool(leftType) ||
-        !this.isContextuallyConvertibleToBool(rightType)
-      ) {
-        this.addError(node, `Operator '${bin.operator}' requires boolean-convertible operands`);
-      }
-      return 'bool';
+  // ─── LOGICAL OPERATORS ──────────────────────────────────────────────────
+  if (['&&', '||'].includes(bin.operator)) {
+    if (!this.isContextuallyConvertibleToBool(leftType) || !this.isContextuallyConvertibleToBool(rightType)) {
+      this.addError(node, `Operator '${bin.operator}' requires boolean-convertible operands`);
     }
+    return 'bool';
+  }
 
-    if (['&', '|', '^', '<<', '>>'].includes(bin.operator)) {
-  // << and >> are stream operators when either side is ostream/istream/manipulator
-  // — skip the integral check entirely in that case.
-  const streamTypes = ['ostream', 'istream', 'manipulator', 'unknown'];
+  // ─── BITWISE & STREAM OPERATORS ─────────────────────────────────────────
+ // backend/src/analysis/typechecker.ts -> visitBinaryOp
+// backend/src/analysis/typechecker.ts -> visitBinaryOp
+
+if (['&', '|', '^', '<<', '>>'].includes(bin.operator)) {
+  const streamTypes = ['ostream', 'istream', 'manipulator', 'unknown', 
+                       'string', 'int', 'float', 'double', 'char', 'bool', 'long'];
   const isStreamOp =
     (bin.operator === '<<' || bin.operator === '>>') &&
     (streamTypes.includes(leftType) || streamTypes.includes(rightType));
@@ -950,33 +964,47 @@ export class TypeChecker {
   }
   return isStreamOp ? leftType : this.promoteType(leftType, rightType);
 }
-
-    return null;
-  }
-
+  return null;
+}
   // =========================================================================
   // Identifier
   // =========================================================================
-  private visitIdentifier(node: ASTNode): string | null {
-    const name = (node as any).name;
+ private visitIdentifier(node: ASTNode): string | null {
+  let name = (node as any).name;
 
-    if (name === 'true' || name === 'false') return 'bool';
-    if (name === 'nullptr') return 'nullptr_t';
+  // 1. Handle Keywords/Literals
+  if (name === 'true' || name === 'false') return 'bool';
+  if (name === 'nullptr') return 'nullptr_t';
 
-    // Ignore std:: qualified names — they're always valid
-    if (typeof name === 'string' && name.startsWith('std::')) return 'unknown';
-
-    const symbol = this.lookupSymbol(name);
-    if (!symbol) {
-      this.addError(node, `Undeclared identifier '${name}'`);
-      return null;
-    }
-    if (!symbol.initialized && symbol.kind !== 'function') {
-      this.addError(node, `Variable '${name}' used before initialization`, 'warning');
-    }
-    this.markRead(name);
-    return symbol.type;
+  // 2. Handle std:: prefix (e.g., std::cout)
+  // Strip the prefix for lookup if your symbolTable uses plain 'cout' 
+  // or handle it as a pass-through.
+  if (typeof name === 'string' && name.startsWith('std::')) {
+    const plainName = name.replace('std::', '');
+    const stdSymbol = this.lookupSymbol(plainName);
+    if (stdSymbol) return stdSymbol.type;
+    return 'unknown'; 
   }
+
+  // 3. Regular Lookup
+  const symbol = this.lookupSymbol(name);
+
+  if (!symbol) {
+    this.addError(node, `Undeclared identifier '${name}'`);
+    return null;
+  }
+
+  // 4. Initialization Check
+  // We don't warn for functions or symbols marked as initialized (like cout/cin)
+  if (!symbol.initialized && symbol.kind !== 'function') {
+    this.addError(node, `Variable '${name}' used before initialization`, 'warning');
+  }
+
+  // 5. Usage Tracking
+  this.markRead(name);
+
+  return symbol.type;
+}
 
   // =========================================================================
   // Return Statement (FIX 9)
@@ -1084,12 +1112,15 @@ export class TypeChecker {
     return null;
   }
 
-  private visitCoutStatement(node: ASTNode): string | null {
-    const cout = node as any;
-    const values: ASTNode[] = cout.values || (cout.value ? [cout.value] : []);
-    values.forEach((expr: ASTNode) => this.visit(expr));
-    return null;
+  private visitCoutStatement(node: any): string | null {
+  // REMOVE: (node.values || []).forEach(...)
+  
+  // FIX: Visit the root of the BinaryOp tree directly
+  if (node.values) {
+    this.visit(node.values);
   }
+  return 'ostream';
+}
 
   // =========================================================================
   // Preprocessor node visitors
@@ -1264,13 +1295,18 @@ export class TypeChecker {
   }
 
   private getFullyScopedName(name: string): string | null {
-    for (let i = this.scopeStack.length - 1; i >= 0; i--) {
-      const scope = this.scopeStack.slice(0, i + 1).join('::');
-      const key = `${scope}::${name}`;
-      if (this.symbolTable[key]) return key;
-    }
-    return null;
+  for (let i = this.scopeStack.length - 1; i >= 0; i--) {
+    const scope = this.scopeStack.slice(0, i + 1).join('::');
+    const key = `${scope}::${name}`;
+    if (this.symbolTable[key]) return key;
   }
+  
+  // NEW: Check global if not found in current stacks
+  const globalKey = `global::${name}`;
+  if (this.symbolTable[globalKey]) return globalKey;
+
+  return null;
+}
 
   // =========================================================================
   // Scope helpers
@@ -1340,14 +1376,19 @@ export class TypeChecker {
   }
 
   private lookupSymbol(name: string): SymbolInfo | null {
-    for (let i = this.scopeStack.length - 1; i >= 0; i--) {
-      const scope = this.scopeStack.slice(0, i + 1).join('::');
-      const key = `${scope}::${name}`;
-      if (this.symbolTable[key]) return this.symbolTable[key];
-    }
-    return null;
+  // 1. Search up the scope stack (local variables, parameters, etc.)
+  for (let i = this.scopeStack.length - 1; i >= 0; i--) {
+    const scope = this.scopeStack.slice(0, i + 1).join('::');
+    const key = `${scope}::${name}`;
+    if (this.symbolTable[key]) return this.symbolTable[key];
   }
 
+  // 2. NEW: Explicitly check the global standard library namespace
+  const globalKey = `global::${name}`;
+  if (this.symbolTable[globalKey]) return this.symbolTable[globalKey];
+
+  return null;
+}
   // =========================================================================
   // FIX 16 helper — checks if a body has any break / return / exit() call
   // that could terminate the loop, preventing a false-positive infinite-loop warning
@@ -1432,7 +1473,7 @@ export class TypeChecker {
   // Type compatibility & promotion helpers
   // =========================================================================
   private isTypeCompatible(target: string, source: string, sourceNode?: any): boolean {
-    if (target === source) return true;
+    if (target.replace(/\s+/g, '') === source.replace(/\s+/g, '')) return true;
     if (target === 'unknown' || source === 'unknown') return true;
 
     if (target.endsWith('*')) {

@@ -334,12 +334,24 @@ StreamStatement
 
 CoutChain
   = "<<" _ first:Expression rest:(_ "<<" _ Expression)* {
-      return [first, ...rest.map(r => r[3])];
+      return rest.reduce((acc, r) => ({
+        type: 'BinaryOp', 
+        operator: '<<', 
+        left: acc, 
+        right: r[3], 
+        ...loc()
+      }), first);
     }
 
 CinChain
   = ">>" _ first:CinTarget rest:(_ ">>" _ CinTarget)* {
-      return [first, ...rest.map(r => r[3])];
+      return rest.reduce((acc, r) => ({
+        type: 'BinaryOp', 
+        operator: '>>', 
+        left: acc, 
+        right: r[3], 
+        ...loc()
+      }), first);
     }
 
 // FIX: CinTarget tries ArrayAccess before plain Identifier so `cin >> arr[i]`
