@@ -540,9 +540,6 @@ export const HomeDashboard: React.FC = () => {
                   <button className="cs-btn cs-gold-btn" onClick={() => navigate('/leaderboard')} style={{ ...fullProfileBtnStyle, color: '#ffc107', borderColor: '#ffc107' }}>
                     🏆 View Full Leaderboard
                   </button>
-                  <button className="cs-btn cs-outline-btn" onClick={() => navigate('/profile')} style={fullProfileBtnStyle}>
-                    View Full Profile
-                  </button>
                 </div>
               </>
             )}
