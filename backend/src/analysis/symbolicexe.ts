@@ -30,11 +30,11 @@ import {
 } from '../types';
 
 export type SymbolicValue =
-  | { type: 'concrete'; value: number; arraySize?: number }
-  | { type: 'symbolic'; name: string; constraints: Constraint[]; arraySize?: number }
-  | { type: 'unknown'; arraySize?: number }
-  | { type: 'pointer'; target?: string; offset: number; isNull?: boolean; isFreed?: boolean; arraySize?: number }
-  | { type: 'nullptr'; arraySize?: number };
+| { type: 'concrete'; value: number; arraySize?: number; arraySizes?: number[] }
+| { type: 'symbolic'; name: string; constraints: Constraint[]; arraySize?: number; arraySizes?: number[] }
+| { type: 'unknown'; arraySize?: number; arraySizes?: number[] }
+| { type: 'pointer'; target?: string; offset: number; isNull?: boolean; isFreed?: boolean; arraySize?: number; arraySizes?: number[] }
+| { type: 'nullptr'; arraySize?: number; arraySizes?: number[] }
 
 interface Constraint {
   variable: string;
@@ -122,8 +122,10 @@ export class SymbolicExecutor {
         // Pre-seed local arrays too so bounds checks work even before decl is visited
         if (symbol.dimensions?.length) {
           this.state.variables.set(symbol.name, {
-            type: 'concrete', value: 0, arraySize: symbol.dimensions[0],
-          });
+  type: 'concrete', value: 0,
+  arraySize: symbol.dimensions[0],
+  arraySizes: symbol.dimensions,   // store ALL dims
+});
         }
       }
     });
@@ -265,7 +267,16 @@ export class SymbolicExecutor {
       const dim0 = (node.dimensions[0] as any)?.value;
       if (typeof dim0 === 'number') size = dim0;
     }
-    const finalVal: SymbolicValue = size !== undefined ? { ...val, arraySize: size } : val;
+    const allDims: number[] = [];
+if (node.dimensions) {
+  node.dimensions.forEach((d: any) => {
+    const v = d?.value;
+    if (typeof v === 'number') allDims.push(v);
+  });
+}
+const finalVal: SymbolicValue = allDims.length > 0
+  ? { ...val, arraySize: allDims[0], arraySizes: allDims }
+  : val;
     this.state.variables.set(node.name, finalVal);
 
     // Emit to rich Math tab trace
@@ -450,6 +461,12 @@ export class SymbolicExecutor {
   }
 
   private visitBinaryOp(node: BinaryOpNode): SymbolicValue {
+
+    if (node.operator === '<<' || node.operator === '>>') {
+        this.visit(node.left);
+        this.visit(node.right);
+        return { type: 'unknown' as const };
+    }
     const leftRaw  = this.visit(node.left);
     const rightRaw = this.visit(node.right);
 
@@ -590,6 +607,23 @@ export class SymbolicExecutor {
   private visitArrayAccess(node: ArrayAccessNode): SymbolicValue {
     const arr = this.state.variables.get(node.name);
 
+    if (arr && arr.type === 'pointer') {
+    if (arr.isNull) {
+      this.addSafetyCheck(
+        (node as any).line || 0, 'bounds', 'UNSAFE',
+        `Null pointer '${node.name}' used as array — will cause segfault`
+      );
+      return { type: 'unknown' as const };
+    }
+    if (arr.isFreed) {
+      this.addSafetyCheck(
+        (node as any).line || 0, 'bounds', 'UNSAFE',
+        `Use-after-free: '${node.name}' was deleted and then accessed`
+      );
+      return { type: 'unknown' as const };
+    }
+  }
+  
     if (arr?.arraySize !== undefined) {
       node.indices.forEach((indexNode: ASTNode, dim: number) => {
         const idxRaw = this.visit(indexNode);
@@ -608,7 +642,9 @@ export class SymbolicExecutor {
         })();
 
         if (resolvedIdx?.type === 'concrete') {
-          const sizeForDim = dim === 0 ? arr.arraySize : undefined;
+          const sizeForDim = arr.arraySizes
+  ? arr.arraySizes[dim]
+  : (dim === 0 ? arr.arraySize : undefined);
           if (sizeForDim !== undefined) {
             if (resolvedIdx.value < 0) {
               this.addSafetyCheck(
@@ -710,9 +746,17 @@ export class SymbolicExecutor {
   }
 
   private visitFunctionCall(node: FunctionCallNode): SymbolicValue {
-    (node.arguments || []).forEach((arg: ASTNode) => this.visit(arg));
-    return { type: 'unknown' as const };
+  if (node.name === this.currentFunction) {
+    this.addSafetyCheck(
+      (node as any).line || 0,
+      'recursion',
+      'WARNING',
+      `Recursive call to '${node.name}' detected. Verify a base case exists to prevent a stack overflow.`,
+    );
   }
+  (node.arguments || []).forEach((arg: ASTNode) => this.visit(arg));
+  return { type: 'unknown' as const };
+}
 
   private visitMultipleVariableDecl(node: any): SymbolicValue {
     (node.declarations || []).forEach((decl: ASTNode) => this.visit(decl));
@@ -795,21 +839,43 @@ export class SymbolicExecutor {
   }
 
   private visitCoutStatement(node: any): SymbolicValue {
-    (node.values || []).forEach((e: ASTNode) => this.visit(e));
+    // node.values is now the root of the BinaryOp tree (e.g., cout << "hello")
+    if (node.values) {
+        this.visit(node.values);
+    }
     return { type: 'unknown' as const };
-  }
+}
 
   // ==========================================================================
   // FIX 15: visitIdentifier — check initialized set for uninitialized access
   // ==========================================================================
   private visitIdentifier(node: any): SymbolicValue {
     const val = this.state.variables.get(node.name);
-    if (val) return val;
 
-    // If the symbol was declared (in symbol table) but never initialized in
-    // our state, that is suspicious.
-    // We don't emit a safety check here — TypeChecker already covers it.
-    return { type: 'unknown' as const };
+    if (!val && !this.state.initialized.has(node.name)) {
+      const stdSymbols = new Set([
+        'cout', 'cin', 'endl', 'cerr', 'clog', 'string',
+        'true', 'false', 'nullptr',
+        'setw', 'setprecision', 'setfill', 'fixed', 'showpoint',
+        'left', 'right', 'boolalpha', 'noboolalpha',
+        'pow', 'sqrt', 'abs', 'fabs', 'ceil', 'floor', 'round',
+        'stoi', 'stod', 'stof', 'stol', 'stoul', 'to_string',
+        'ifstream', 'ofstream', 'fstream',
+        'rand', 'srand', 'exit', 'system', 'getline',
+        'INT_MAX', 'INT_MIN', 'LLONG_MAX', 'LLONG_MIN',
+        'EOF', 'NULL',
+      ]);
+      if (!stdSymbols.has(node.name)) {
+        this.addSafetyCheck(
+          (node as any).line || 0,
+          'uninitialized',
+          'WARNING',
+          `Variable '${node.name}' may be used before initialization`
+        );
+      }
+    }
+
+    return val ?? { type: 'unknown' as const };
   }
 
   // ==========================================================================

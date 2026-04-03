@@ -113,13 +113,23 @@ export class TypeChecker {
   private initializeStandardLibrary(): void {
     const ioSymbols: Array<[string, string]> = [
       ['cout', 'ostream'], ['cin', 'istream'], ['cerr', 'ostream'],
-      ['clog', 'ostream'], ['endl', 'manipulator'],
+      ['clog', 'ostream'], 
     ];
     ioSymbols.forEach(([name, type]) => {
       this.symbolTable[`global::${name}`] = {
         name, type, line: 0, scope: 'global', initialized: true, isDefined: true, kind: 'variable',
       };
     });
+
+    this.symbolTable['global::endl'] = {
+    name: 'endl', 
+    type: 'ostream', 
+    line: 0, 
+    scope: 'global', 
+    initialized: true, 
+    isDefined: true, 
+    kind: 'variable',
+  };
 
     ['setw', 'setprecision', 'setfill', 'fixed', 'showpoint', 'left', 'right',
       'boolalpha', 'noboolalpha'].forEach(m => {
@@ -306,13 +316,25 @@ export class TypeChecker {
     this.enterScope(func.name);
 
     func.params.forEach((param: ParameterNode) => {
-      if (!param.name) {
-        this.addError(node, `Function '${func.name}': unnamed parameters are not allowed in definitions`, 'error');
-        return;
-      }
-      this.addSymbol(param.name, param.varType, param.line || 0, true, undefined, true, 'parameter');
-      this.markRead(param.name); // implicit usage credit
-    });
+  if (!param.name) {
+    this.addError(node, `Function '${func.name}': unnamed parameters are not allowed in definitions`, 'error');
+    return;
+  }
+
+  // 1. Register the symbol as a parameter
+  this.addSymbol(param.name, param.varType, param.line || 0, true, undefined, true, 'parameter');
+
+  // 2. Track the initial "Write" from the caller. 
+  // We don't call markRead yet because the function body hasn't actually used it.
+  const fullKey = `${this.currentScope}::${param.name}`;
+  
+  // We set 'overwritten: false' to indicate it has a value from the caller, 
+  // but it hasn't been replaced by an internal assignment yet.
+  this.dirtyAssignment.set(fullKey, { 
+    line: param.line || func.line || 0, 
+    overwritten: false 
+  });
+});
 
     if (Array.isArray(func.body)) {
       let returnSeen = false;
@@ -328,17 +350,24 @@ export class TypeChecker {
     // Strict return enforcement — now uses multi-path allPathsReturn()
     if (func.name === 'main') {
       if (func.returnType !== 'int') {
-        this.addError(node, "Strict Error: 'main' must have return type 'int'", 'error');
+        this.addError(node, "C++ Standard: 'main' must have return type 'int'", 'error');
       }
       if (!this.functionHasTopLevelReturn && !this.allPathsReturn(func.body || [])) {
         this.addError(node, "Strict Error: 'main' must explicitly 'return 0;'", 'error');
       }
-    } else if (func.returnType !== 'void') {
+    } if (!this.functionHasTopLevelReturn && !this.allPathsReturn(func.body || [])) {
+        this.addError(
+          node,
+          "Style Hint: While 'main' implicitly returns 0, explicitly writing 'return 0;' is better practice.", 
+          'warning'
+        );
+      }else if (func.returnType !== 'void') {
+      // Normal functions MUST return a value if they aren't void
       if (!this.functionHasTopLevelReturn && !this.allPathsReturn(func.body || [])) {
         this.addError(
           node,
-          `Not all paths in function '${func.name}' return a value (return type: '${func.returnType}')`,
-          'error',
+          `Semantic Error: Not all paths in function '${func.name}' return a value (expects '${func.returnType}').`,
+          'error'
         );
       }
     }
@@ -382,13 +411,18 @@ export class TypeChecker {
     return varNode.varType;
   }
 
+  // Multi-declaration support (e.g., int x, y, z;)
+  private visitMultipleVariableDecl(node: any): string | null {
+    let lastType: string | null = null;
+    (node.declarations || []).forEach((decl: ASTNode) => {
+      lastType = this.visitVariableDecl(decl);
+    });
+    return lastType;
+  }
+
   // =========================================================================
   // Array Access
   // =========================================================================
-  private visitMultipleVariableDecl(node: any): string | null {
-    (node.declarations || []).forEach((decl: ASTNode) => this.visitVariableDecl(decl));
-    return null;
-  }
 
   private visitArrayAccess(node: ASTNode): string | null {
     const arr = node as ArrayAccessNode;
@@ -417,7 +451,16 @@ export class TypeChecker {
         }
       }
     });
-    return symbol.type;
+    let resultingType = symbol.type;
+  for (let i = 0; i < arr.indices.length; i++) {
+    if (resultingType.endsWith('*')) {
+      resultingType = resultingType.slice(0, -1).trim();
+    } else if (resultingType.endsWith(']')) {
+      // Handle cases where type might be stored as 'int[10]'
+      resultingType = resultingType.split('[')[0].trim();
+    }
+  }
+    return resultingType;
   }
 
   // =========================================================================
@@ -650,6 +693,14 @@ export class TypeChecker {
     const call = node as FunctionCallNode;
     this.markRead(call.name);
 
+    if (this.currentFunction && call.name === this.currentFunction.name) {
+    this.addError(
+      node,
+      `Recursive call detected: '${call.name}' calls itself. Ensure a base case exists to prevent infinite recursion.`,
+      'warning',
+    );
+  }
+
     if (call.arguments) {
       call.arguments.forEach((arg: ASTNode) => this.visit(arg));
     }
@@ -837,107 +888,123 @@ export class TypeChecker {
   // Binary Operations
   // =========================================================================
   private visitBinaryOp(node: ASTNode): string | null {
-    const bin = node as BinaryOpNode;
-    const leftType = this.visit(bin.left);
-    const rightType = this.visit(bin.right);
+  const bin = node as BinaryOpNode;
+  const leftType = this.visit(bin.left);
+  const rightType = this.visit(bin.right);
 
-    if (!leftType || !rightType) return null;
+  if (!leftType || !rightType) return null;
 
-    if (['+', '-', '*', '/', '%'].includes(bin.operator)) {
-      if (bin.operator === '+' && leftType === 'string' && rightType === 'string') {
-        return 'string';
-      }
-      if (bin.operator === '+' && (leftType === 'string' || rightType === 'string')) {
-        this.addError(
-          node,
-          `Cannot use '+' between '${leftType}' and '${rightType}'. ` +
-          `Use std::to_string() to convert numbers to strings.`,
-          'error',
-        );
-        return 'string';
-      }
-      if (!this.isNumericType(leftType) || !this.isNumericType(rightType)) {
-        this.addError(
-          node,
-          `Operator '${bin.operator}' requires numeric operands, got '${leftType}' and '${rightType}'`,
-        );
-        return null;
-      }
-      if (bin.operator === '/') {
-        // Division by zero is handled by the symbolic executor (safetyCheck),
-        // not as a hard semantic error — code after a return or in dead branches
-        // should not block compilation.
-      }
-      if (bin.operator === '%') {
-        if (
-          !['int', 'char', 'long', 'short'].includes(leftType) ||
-          !['int', 'char', 'long', 'short'].includes(rightType)
-        ) {
-          this.addError(
-            node,
-            `Operator '%' is only valid for integer types, got '${leftType}' and '${rightType}'`,
-            'error',
-          );
-        }
-        return 'int';
-      }
-      return this.promoteType(leftType, rightType);
+  // ─── ARITHMETIC OPERATORS ───────────────────────────────────────────────
+  if (['+', '-', '*', '/', '%'].includes(bin.operator)) {
+    if (bin.operator === '+' && leftType === 'string' && rightType === 'string') {
+      return 'string';
     }
-
-    if (['<', '>', '<=', '>=', '==', '!='].includes(bin.operator)) {
-      if (!this.isComparable(leftType, rightType)) {
-        this.addError(node, `Cannot compare '${leftType}' with '${rightType}'`);
-      }
-      return 'bool';
+    if (bin.operator === '+' && (leftType === 'string' || rightType === 'string')) {
+      this.addError(
+        node,
+        `Cannot use '+' between '${leftType}' and '${rightType}'. ` +
+        `Use std::to_string() to convert numbers to strings.`,
+        'error',
+      );
+      return 'string';
     }
-
-    if (['&&', '||'].includes(bin.operator)) {
-      if (
-        !this.isContextuallyConvertibleToBool(leftType) ||
-        !this.isContextuallyConvertibleToBool(rightType)
-      ) {
-        this.addError(node, `Operator '${bin.operator}' requires boolean-convertible operands`);
-      }
-      return 'bool';
+    if (!this.isNumericType(leftType) || !this.isNumericType(rightType)) {
+      this.addError(
+        node,
+        `Operator '${bin.operator}' requires numeric operands, got '${leftType}' and '${rightType}'`,
+      );
+      return null;
     }
-
-    if (['&', '|', '^', '<<', '>>'].includes(bin.operator)) {
+    if (bin.operator === '%') {
       if (!this.isIntegralType(leftType) || !this.isIntegralType(rightType)) {
         this.addError(
           node,
-          `Bitwise operator '${bin.operator}' requires integral operands, got '${leftType}' and '${rightType}'`,
+          `Operator '%' is only valid for integer types, got '${leftType}' and '${rightType}'`,
           'error',
         );
       }
-      return this.promoteType(leftType, rightType);
+      return 'int';
     }
-
-    return null;
+    return this.promoteType(leftType, rightType);
   }
 
+  // ─── COMPARISON OPERATORS ───────────────────────────────────────────────
+  if (['<', '>', '<=', '>=', '==', '!='].includes(bin.operator)) {
+    if (!this.isComparable(leftType, rightType)) {
+      this.addError(node, `Cannot compare '${leftType}' with '${rightType}'`);
+    }
+    return 'bool';
+  }
+
+  // ─── LOGICAL OPERATORS ──────────────────────────────────────────────────
+  if (['&&', '||'].includes(bin.operator)) {
+    if (!this.isContextuallyConvertibleToBool(leftType) || !this.isContextuallyConvertibleToBool(rightType)) {
+      this.addError(node, `Operator '${bin.operator}' requires boolean-convertible operands`);
+    }
+    return 'bool';
+  }
+
+  // ─── BITWISE & STREAM OPERATORS ─────────────────────────────────────────
+ // backend/src/analysis/typechecker.ts -> visitBinaryOp
+// backend/src/analysis/typechecker.ts -> visitBinaryOp
+
+if (['&', '|', '^', '<<', '>>'].includes(bin.operator)) {
+  const streamTypes = ['ostream', 'istream', 'manipulator', 'unknown', 
+                       'string', 'int', 'float', 'double', 'char', 'bool', 'long'];
+  const isStreamOp =
+    (bin.operator === '<<' || bin.operator === '>>') &&
+    (streamTypes.includes(leftType) || streamTypes.includes(rightType));
+
+  if (!isStreamOp && (!this.isIntegralType(leftType) || !this.isIntegralType(rightType))) {
+    this.addError(
+      node,
+      `Bitwise operator '${bin.operator}' requires integral operands, got '${leftType}' and '${rightType}'`,
+      'error',
+    );
+  }
+  return isStreamOp ? leftType : this.promoteType(leftType, rightType);
+}
+  return null;
+}
   // =========================================================================
   // Identifier
   // =========================================================================
-  private visitIdentifier(node: ASTNode): string | null {
-    const name = (node as any).name;
+ private visitIdentifier(node: ASTNode): string | null {
+  let name = (node as any).name;
 
-    if (name === 'true' || name === 'false') return 'bool';
-    if (name === 'nullptr') return 'nullptr_t';
+  // 1. Handle Keywords/Literals
+  if (name === 'true' || name === 'false') return 'bool';
+  if (name === 'nullptr') return 'nullptr_t';
 
-    // Ignore std:: qualified names — they're always valid
-    if (typeof name === 'string' && name.startsWith('std::')) return 'unknown';
-
-    const symbol = this.lookupSymbol(name);
-    if (!symbol) {
-      this.addError(node, `Undeclared identifier '${name}'`);
-      return null;
-    }
-    if (!symbol.initialized && symbol.kind !== 'function') {
-      this.addError(node, `Variable '${name}' used before initialization`, 'warning');
-    }
-    this.markRead(name);
-    return symbol.type;
+  // 2. Handle std:: prefix (e.g., std::cout)
+  // Strip the prefix for lookup if your symbolTable uses plain 'cout' 
+  // or handle it as a pass-through.
+  if (typeof name === 'string' && name.startsWith('std::')) {
+    const plainName = name.replace('std::', '');
+    const stdSymbol = this.lookupSymbol(plainName);
+    if (stdSymbol) return stdSymbol.type;
+    return 'unknown'; 
   }
+
+  // 3. Regular Lookup
+  const symbol = this.lookupSymbol(name);
+
+  if (!symbol) {
+    this.addError(node, `Undeclared identifier '${name}'`);
+    return null;
+  }
+
+  // 4. Initialization Check
+  // We don't warn for functions or symbols marked as initialized (like cout/cin)
+  if (!symbol.initialized && symbol.kind !== 'function') {
+    this.addError(node, `Variable '${name}' used before initialization`, 'warning');
+  }
+
+  // 5. Usage Tracking
+  this.markRead(name);
+
+  return symbol.type;
+}
 
   // =========================================================================
   // Return Statement (FIX 9)
@@ -1045,12 +1112,15 @@ export class TypeChecker {
     return null;
   }
 
-  private visitCoutStatement(node: ASTNode): string | null {
-    const cout = node as any;
-    const values: ASTNode[] = cout.values || (cout.value ? [cout.value] : []);
-    values.forEach((expr: ASTNode) => this.visit(expr));
-    return null;
+  private visitCoutStatement(node: any): string | null {
+  // REMOVE: (node.values || []).forEach(...)
+  
+  // FIX: Visit the root of the BinaryOp tree directly
+  if (node.values) {
+    this.visit(node.values);
   }
+  return 'ostream';
+}
 
   // =========================================================================
   // Preprocessor node visitors
@@ -1148,15 +1218,16 @@ export class TypeChecker {
   // Range-Based For Loop  (C++11)
   // =========================================================================
   private visitRangeBasedFor(node: any): string | null {
-    this.visit(node.range);   // traverse range expression for side-effects (type checks, undeclared vars)
-    this.loopDepth++;
-    this.enterScope('range-for');
-    this.addSymbol(node.name, node.varType, node.line || 0, true, undefined, true, 'variable');
-    (node.body || []).forEach((s: any) => this.visit(s));
-    this.exitScope();
-    this.loopDepth--;
-    return null;
-  }
+  this.visit(node.range);
+  this.loopDepth++;
+  this.enterScope('range-for');
+  this.addSymbol(node.name, node.varType, node.line || 0, true, undefined, true, 'variable');
+  this.markRead(node.name); // ADD THIS LINE — the range loop implicitly uses the var
+  (node.body || []).forEach((s: any) => this.visit(s));
+  this.exitScope();
+  this.loopDepth--;
+  return null;
+}
 
   // Preprocessor no-ops
   private visitUndef(_n: any):    string | null { return null; }
@@ -1178,18 +1249,23 @@ export class TypeChecker {
   // Redundant-assignment & usage tracking
   // =========================================================================
   private markWrite(name: string, line: number): void {
-    const full = this.getFullyScopedName(name);
-    if (!full) return;
-    if (this.dirtyAssignment.has(full)) {
-      const prev = this.dirtyAssignment.get(full)!;
-      this.addError(
-        { line } as any,
-        `Redundant assignment: value assigned to '${name}' on line ${prev.line} was overwritten before being used.`,
-        'warning',
-      );
-    }
-    this.dirtyAssignment.set(full, { line, overwritten: true });
+  const full = this.getFullyScopedName(name);
+  if (!full) return;
+  
+  const sym = this.symbolTable[full];
+  const isParameter = sym && (sym as any).kind === 'parameter';
+
+  if (this.dirtyAssignment.has(full)) {
+    const prev = this.dirtyAssignment.get(full)!;
+    this.addError(
+      { line } as any,
+      `Redundant assignment: Value in '${name}' ${isParameter ? '(passed as argument) ' : ''}was overwritten on line ${line} before being used.`,
+      'warning',
+    );
   }
+  
+  this.dirtyAssignment.set(full, { line, overwritten: true });
+}
 
   private markRead(name: string): void {
     const full = this.getFullyScopedName(name);
@@ -1219,13 +1295,18 @@ export class TypeChecker {
   }
 
   private getFullyScopedName(name: string): string | null {
-    for (let i = this.scopeStack.length - 1; i >= 0; i--) {
-      const scope = this.scopeStack.slice(0, i + 1).join('::');
-      const key = `${scope}::${name}`;
-      if (this.symbolTable[key]) return key;
-    }
-    return null;
+  for (let i = this.scopeStack.length - 1; i >= 0; i--) {
+    const scope = this.scopeStack.slice(0, i + 1).join('::');
+    const key = `${scope}::${name}`;
+    if (this.symbolTable[key]) return key;
   }
+  
+  // NEW: Check global if not found in current stacks
+  const globalKey = `global::${name}`;
+  if (this.symbolTable[globalKey]) return globalKey;
+
+  return null;
+}
 
   // =========================================================================
   // Scope helpers
@@ -1295,14 +1376,19 @@ export class TypeChecker {
   }
 
   private lookupSymbol(name: string): SymbolInfo | null {
-    for (let i = this.scopeStack.length - 1; i >= 0; i--) {
-      const scope = this.scopeStack.slice(0, i + 1).join('::');
-      const key = `${scope}::${name}`;
-      if (this.symbolTable[key]) return this.symbolTable[key];
-    }
-    return null;
+  // 1. Search up the scope stack (local variables, parameters, etc.)
+  for (let i = this.scopeStack.length - 1; i >= 0; i--) {
+    const scope = this.scopeStack.slice(0, i + 1).join('::');
+    const key = `${scope}::${name}`;
+    if (this.symbolTable[key]) return this.symbolTable[key];
   }
 
+  // 2. NEW: Explicitly check the global standard library namespace
+  const globalKey = `global::${name}`;
+  if (this.symbolTable[globalKey]) return this.symbolTable[globalKey];
+
+  return null;
+}
   // =========================================================================
   // FIX 16 helper — checks if a body has any break / return / exit() call
   // that could terminate the loop, preventing a false-positive infinite-loop warning
@@ -1387,7 +1473,7 @@ export class TypeChecker {
   // Type compatibility & promotion helpers
   // =========================================================================
   private isTypeCompatible(target: string, source: string, sourceNode?: any): boolean {
-    if (target === source) return true;
+    if (target.replace(/\s+/g, '') === source.replace(/\s+/g, '')) return true;
     if (target === 'unknown' || source === 'unknown') return true;
 
     if (target.endsWith('*')) {

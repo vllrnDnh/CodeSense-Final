@@ -33,18 +33,37 @@ import {
 export class CognitiveComplexity {
   private complexity = 0;
   private nestingLevel = 0;
-  private inFunction = false;
+  //private inFunction = false;
 
   calculate(ast: ASTNode): number {
     this.complexity = 0;
     this.nestingLevel = 0;
-    this.inFunction = false;
+
+    this.linkParents(ast);
+    
+    //this.inFunction = false;
     this.visit(ast);
     return this.complexity;
   }
 
-  private visit(node: ASTNode | null | string): void {
-    if (!node || typeof node === 'string') return;
+  private linkParents(node: any, parent: any = null): void {
+    if (!node || typeof node !== 'object') return;
+    node.parent = parent;
+    for (const key in node) {
+      if (key === 'parent') continue;
+      if (Object.prototype.hasOwnProperty.call(node, key)) {
+        const child = node[key];
+        if (Array.isArray(child)) {
+          child.forEach(c => this.linkParents(c, node));
+        } else if (child && typeof child === 'object' && child.type) {
+          this.linkParents(child, node);
+        }
+      }
+    }
+  }
+
+  private visit(node: ASTNode | null ): void {
+    if (!node) return;
     const methodName = `visit${node.type}`;
     if (typeof (this as any)[methodName] === 'function') {
       (this as any)[methodName](node);
@@ -64,10 +83,10 @@ export class CognitiveComplexity {
   // ── Functions ─────────────────────────────────────────────────────────────
   private visitFunctionDecl(node: ASTNode): void {
     const funcNode = node as FunctionDeclNode;
-    const wasInFunction = this.inFunction;
-    this.inFunction = true;
+    //const wasInFunction = this.inFunction;
+    //this.inFunction = true;
     (funcNode.body || []).forEach((stmt: ASTNode) => this.visit(stmt));
-    this.inFunction = wasInFunction;
+    //this.inFunction = wasInFunction;
   }
 
   private visitFunctionPrototype(_node: ASTNode): void {
@@ -75,24 +94,28 @@ export class CognitiveComplexity {
   }
 
   // ── Control Flow ──────────────────────────────────────────────────────────
-  private visitIfStatement(node: ASTNode): void {
-    const ifNode = node as IfStatementNode;
+  private visitIfStatement(node: IfStatementNode): void {
+    // 1. Structural Increment + Nesting Increment
     this.complexity += 1 + this.nestingLevel;
-    this.visit(ifNode.condition);
 
     this.nestingLevel++;
-    (ifNode.thenBranch || []).forEach((stmt: ASTNode) => this.visit(stmt));
-
-    if (ifNode.elseBranch && ifNode.elseBranch.length > 0) {
-      const isElseIf =
-        ifNode.elseBranch.length === 1 &&
-        ifNode.elseBranch[0].type === 'IfStatement';
-      if (!isElseIf) {
-        this.complexity += 1;
-      }
-      ifNode.elseBranch.forEach((stmt: ASTNode) => this.visit(stmt));
-    }
+    (node.thenBranch || []).forEach(stmt => this.visit(stmt));
     this.nestingLevel--;
+
+    if (node.elseBranch && node.elseBranch.length > 0) {
+      // Check if it's an 'else if'
+      const firstElse = node.elseBranch[0];
+      const isElseIf = firstElse.type === 'IfStatement';
+
+      if (isElseIf) {
+        // 'else if' does not increase nesting, just recurses
+        this.visit(firstElse);
+      } else {
+        // Plain 'else' adds +1 but NO nesting increment
+        this.complexity += 1;
+        node.elseBranch.forEach(stmt => this.visit(stmt));
+      }
+    }
   }
 
   private visitWhileLoop(node: ASTNode): void {
@@ -156,13 +179,17 @@ export class CognitiveComplexity {
     this.nestingLevel--;
   }
 
-  private visitBinaryOp(node: ASTNode): void {
-    const binOp = node as BinaryOpNode;
-    if (binOp.operator === '&&' || binOp.operator === '||') {
-      this.complexity += 1;
+  private visitBinaryOp(node: BinaryOpNode): void {
+    // COGNITIVE RULE: Sequences of identical logical operators 
+    // are only penalized once. 
+    if ((node.operator === '&&' || node.operator === '||')) {
+      const parent = (node as any).parent; // Requires AST to have parent refs
+      if (!parent || parent.type !== 'BinaryOp' || parent.operator !== node.operator) {
+        this.complexity += 1;
+      }
     }
-    this.visit(binOp.left);
-    this.visit(binOp.right);
+    this.visit(node.left);
+    this.visit(node.right);
   }
 
   private visitLambdaExpression(node: ASTNode): void {
@@ -297,12 +324,16 @@ export class CyclomaticComplexity {
   calculate(ast: ASTNode): CyclomaticResult {
     this.decisions = 0;
     this.walk(ast);
-    // V(G) = number of decisions + 1 (for a single function / connected component)
+    
+    // V(G) = Decisions + 1
     const score = this.decisions + 1;
+    
     return {
       score,
-      edges: this.decisions + 1,     // simplified — actual edge count ≈ decisions + 1
-      nodes: 1,                       // simplified representation
+      // For real-time accuracy, edges/nodes are usually represented via the 
+      // simplified formula rather than a full graph construction.
+      edges: score + 1, 
+      nodes: 2,         
       rating: this.rate(score),
       interpretation: this.interpret(score),
     };
@@ -313,56 +344,60 @@ export class CyclomaticComplexity {
 
     switch (node.type) {
       case 'IfStatement':
-        this.decisions += 1;
-        if (node.elseBranch && node.elseBranch.length > 0) this.decisions += 1;
-        break;
       case 'WhileLoop':
       case 'DoWhileLoop':
       case 'ForLoop':
       case 'RangeBasedFor':
-        this.decisions += 1;
-        break;
-      case 'SwitchStatement':
-        // Each case adds a decision; default is already counted as the fall-through
-        (node.cases || []).forEach((c: any) => {
-          if (c.type === 'Case') this.decisions += 1;
-        });
-        break;
       case 'CatchClause':
+      case 'ConditionalExpression':
         this.decisions += 1;
         break;
-      case 'ConditionalExpression': // ternary ? :
-        this.decisions += 1;
+
+      case 'SwitchStatement':
+        // Standard McCabe: Each case (except the first/default) is a decision.
+        // Simplified: Count every 'Case' node.
+        if (node.cases) {
+          node.cases.forEach((c: any) => {
+            if (c.type === 'Case') this.decisions += 1;
+          });
+        }
         break;
+
       case 'BinaryOp':
+        // Short-circuit operators create a new branch in the execution flow.
         if (node.operator === '&&' || node.operator === '||') {
           this.decisions += 1;
         }
         break;
     }
 
-    // Recurse into children
-    for (const key of Object.keys(node)) {
-      const child = node[key];
-      if (Array.isArray(child)) {
-        child.forEach((c: any) => this.walk(c));
-      } else if (child && typeof child === 'object' && child.type) {
-        this.walk(child);
+    // High-performance recursion
+    for (const key in node) {
+      if (key === 'parent') continue;
+      if (Object.prototype.hasOwnProperty.call(node, key)) {
+        const child = node[key];
+        if (Array.isArray(child)) {
+          for (let i = 0; i < child.length; i++) {
+            this.walk(child[i]);
+          }
+        } else if (child && typeof child === 'object' && child.type) {
+          this.walk(child);
+        }
       }
     }
   }
 
   private rate(score: number): 'low' | 'moderate' | 'high' | 'very high' {
-    if (score <= 5)  return 'low';
-    if (score <= 10) return 'moderate';
-    if (score <= 20) return 'high';
+    if (score <= 10) return 'low';      // Standard industry thresholds
+    if (score <= 20) return 'moderate';
+    if (score <= 50) return 'high';
     return 'very high';
   }
 
   private interpret(score: number): string {
-    if (score <= 5)  return 'Simple, well-structured code. Easy to test and maintain.';
-    if (score <= 10) return 'Moderate complexity. Consider splitting into smaller functions.';
-    if (score <= 20) return 'High complexity. Hard to test fully — refactor is recommended.';
-    return 'Very high complexity. This code is extremely risky and should be refactored immediately.';
+    if (score <= 10) return 'Simple, easy to test.';
+    if (score <= 20) return 'Complex, harder to test.';
+    if (score <= 50) return 'Unstable, high risk.';
+    return 'Untestable, refactor immediately.';
   }
 }

@@ -24,46 +24,39 @@ export class GameEngine {
      * Calculate XP reward for a code submission
      */
     calculateReward(analysis: AnalysisResult, hintsUsed: number): { xp: number; bonus: number } {
-        // 1. Base XP for successful compilation (valid syntax)
-        let xp = 10; 
+  let xp = 10;
 
-        // 2. Cognitive Complexity scoring (nesting-weighted)
-        const cogComplexity = analysis.cognitiveComplexity ?? 0;
-        const cogRaw = cogComplexity <= 3
-            ? cogComplexity * 2          // up to +6 for simple code
-            : -((cogComplexity - 3) * 5); // penalty for high nesting
-        xp += cogRaw;
+  const cogComplexity = analysis.cognitiveComplexity ?? 0;
+  const cogRaw = cogComplexity <= 3
+    ? cogComplexity * 2
+    : -((cogComplexity - 3) * 5);
+  xp += cogRaw;
 
-        // 2b. Cyclomatic Complexity scoring
-        const cycloScore: number = (analysis as any).cyclomaticComplexity?.score
-            ?? (analysis as any).cyclomaticComplexity   // handles plain number
-            ?? 1;
-        const cycloAdj = cycloScore <= 5 ? 3
-            : cycloScore > 10 ? -Math.floor((cycloScore - 10) * 2)
-            : 0;
-        xp += cycloAdj;
+  const cycloScore: number = (analysis as any).cyclomaticComplexity?.score ?? 1;
+  const cycloAdj = cycloScore <= 5 ? 3
+    : cycloScore > 10 ? -Math.floor((cycloScore - 10) * 2)
+    : 0;
+  xp += cycloAdj;
 
-        // 3. Quality Bonus — awarded when there are no compiler errors.
-        //    Safety warnings (UNSAFE safetyChecks) deduct from bonus but don't zero it.
-        let qualityBonus = 0;
-        const errorCount = analysis.errors?.length ?? 0;
-        const unsafeCount = (analysis.safetyChecks ?? []).filter((s: any) => s.status === 'UNSAFE').length;
+  const errorCount = analysis.errors?.length ?? 0;
+  const unsafeCount = (analysis.safetyChecks ?? []).filter((s: any) => s.status === 'UNSAFE').length;
 
-        if (errorCount === 0) {
-            // Full bonus for clean code, reduced by unsafe checks (min 5 if any unsafe found)
-            qualityBonus = unsafeCount === 0 ? 15 : Math.max(5, 15 - unsafeCount * 3);
-        }
+  let qualityBonus = 0;
+  if (errorCount === 0) {
+    qualityBonus = unsafeCount === 0 ? 15 : Math.max(5, 15 - unsafeCount * 3);
+  }
 
-        // Apply floor THEN add quality bonus so even heavily penalised but clean code
-        // still gets the quality reward.
-        xp = Math.max(0, xp) + qualityBonus;
+  // FIX: Apply complexity penalty to quality bonus too, proportionally
+  if (cogComplexity > 10) {
+    qualityBonus = Math.max(0, qualityBonus - Math.floor((cogComplexity - 10) * 2));
+  }
 
-        // 4. Hint penalty (applied last, after quality bonus)
-        const hintPenalty = hintsUsed * 5;
-        xp = Math.max(0, xp - hintPenalty);
+  xp = Math.max(0, xp) + qualityBonus;
+  const hintPenalty = hintsUsed * 5;
+  xp = Math.max(0, xp - hintPenalty);
 
-        return { xp, bonus: qualityBonus };
-    }
+  return { xp, bonus: qualityBonus };
+}
 
     /**
      * Check if the user has leveled up based on new total XP
@@ -138,7 +131,14 @@ export class GameEngine {
                     explanation: "You are using a variable that hasn't been given a value yet.",
                     xpCost: 5
                 };
-            default:
+                case 'recursion':
+                    return {
+                        errorCode: 'LOG_02',
+                        clue: "This function is calling itself.",
+                        explanation: "Recursive functions need a base case — a condition where the function stops calling itself. Without it, the program will crash with a stack overflow.",
+                        xpCost: 10
+                    };
+             default:
                 return {
                     errorCode: 'GEN_01',
                     clue: "Review the logic flow.",

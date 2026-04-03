@@ -399,6 +399,8 @@ int main() {
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [isTokenDrawerOpen, setIsTokenDrawerOpen] = useState(false);
   const [activeTab, setActiveTab] = useState('lexical');
+  const [tabFullscreen, setTabFullscreen] = useState(false);
+  const [editorFullscreen, setEditorFullscreen] = useState(false);
   const [builtCode, setBuiltCode] = useState('');
   const [liveStats, setLiveStats] = useState<LiveStats | null>(null);
   const [xpFlash, setXpFlash] = useState(0);
@@ -450,7 +452,17 @@ int main() {
     } catch (err) { console.error('Failed to fetch live stats:', err); }
   };
 
-  useEffect(() => { fetchLiveStats(); }, [user?.id]); // eslint-disable-line
+  useEffect(() => { fetchLiveStats(); }, [user?.id]); 
+  useEffect(() => {
+  const handleKey = (e: KeyboardEvent) => {
+    if (e.key === 'Escape') {
+      if (tabFullscreen) setTabFullscreen(false);
+      if (editorFullscreen) setEditorFullscreen(false);
+    }
+  };
+  window.addEventListener('keydown', handleKey);
+  return () => window.removeEventListener('keydown', handleKey);
+}, [tabFullscreen, editorFullscreen]);
 
   const handleNodeClick = (line: number) => {
     if (!editorRef.current) return;
@@ -559,9 +571,40 @@ int main() {
               }
             >
               <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', padding: '12px', minHeight: 0 }}>
-                <div className="editor-container" style={{ flex: 1, minHeight: 0 }}>
-                  <CodeEditor code={code} onChange={setCode} onEditorMount={e => (editorRef.current = e)} />
-                </div>
+                <div style={{ position: 'relative', flex: 1, minHeight: 0 }}>
+  <div className="editor-container" style={{ height: '100%' }}>
+    <CodeEditor code={code} onChange={setCode} onEditorMount={e => (editorRef.current = e)} />
+  </div>
+  {/* Fullscreen button — top right corner of editor */}
+  <button
+    type="button"
+    onClick={() => setEditorFullscreen(true)}
+    title="Fullscreen Editor"
+    style={{
+      position: 'absolute',
+      bottom: '8px',
+      right: '8px',
+      zIndex: 10,
+      padding: '4px 10px',
+      borderRadius: '6px',
+      border: '1px solid rgba(63,185,80,0.3)',
+      background: 'rgba(13,17,23,0.85)',
+      color: '#3fb950',
+      fontSize: '11px',
+      fontWeight: '700',
+      cursor: 'pointer',
+      fontFamily: 'IBM Plex Mono, monospace',
+      letterSpacing: '0.4px',
+      display: 'flex',
+      alignItems: 'center',
+      gap: '5px',
+      backdropFilter: 'blur(4px)',
+      transition: 'all 0.2s',
+    }}
+  >
+    ⛶ FULL
+  </button>
+</div>
                 <div className="action-bar" style={{ marginTop: '10px', flexShrink: 0 }}>
                   <button onClick={handleAnalyze} disabled={isAnalyzing} className="analyze-btn">
                     {isAnalyzing ? '⟳  Analyzing…' : 'ANALYZE CODE'}
@@ -599,13 +642,41 @@ int main() {
             >
               <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minHeight: 0 }}>
                 {/* Tab headers */}
-                <div className="tab-headers" style={{ flexShrink: 0 }}>
-                  {TABS.map(({ id, label }) => (
-                    <button key={id} onClick={() => setActiveTab(id)} className={activeTab === id ? 'tab-link active' : 'tab-link'}>
-                      {label}
-                    </button>
-                  ))}
-                </div>
+                <div className="tab-headers">
+  {TABS.map(({ id, label }) => (
+    <button key={id} onClick={() => setActiveTab(id)} className={activeTab === id ? 'tab-link active' : 'tab-link'}>
+      {label}
+    </button>
+  ))}
+  {result && (
+    <button
+      onClick={() => setTabFullscreen(true)}
+      title="View Fullscreen"
+      style={{
+        marginLeft: 'auto',
+        marginRight: '8px',
+        padding: '4px 10px',
+        borderRadius: '6px',
+        border: '1px solid rgba(88,166,255,0.3)',
+        background: 'rgba(88,166,255,0.08)',
+        color: '#58a6ff',
+        fontSize: '11px',
+        fontWeight: '700',
+        cursor: 'pointer',
+        fontFamily: 'IBM Plex Mono, monospace',
+        letterSpacing: '0.4px',
+        display: 'flex',
+        alignItems: 'center',
+        gap: '5px',
+        flexShrink: 0,
+        whiteSpace: 'nowrap',
+        transition: 'all 0.2s',
+      }}
+    >
+      ⛶ FULL
+    </button>
+  )}
+</div>
 
                 <div className="tab-content" style={{ flex: 1, overflow: 'hidden', minHeight: 0 }}>
                   {/* Lexical */}
@@ -761,6 +832,327 @@ int main() {
       {mode === 'analyze' && (
         <TokenDrawer tokens={result?.tokens || []} isOpen={isTokenDrawerOpen} onClose={() => setIsTokenDrawerOpen(false)} />
       )}
+
+      {/* ── Logs Fullscreen Modal ─────────────────────────────────────── */}
+{/* ── Tab Fullscreen Modal ─────────────────────────────────────── */}
+{/* ── Tab Fullscreen Modal ─────────────────────────────────────── */}
+{tabFullscreen && (
+  <div
+    style={{
+      position: 'fixed',
+      inset: 0,
+      zIndex: 9999,
+      background: 'rgba(1,4,9,0.92)',
+      backdropFilter: 'blur(6px)',
+      display: 'flex',
+      flexDirection: 'column',
+      padding: '24px',
+    }}
+    onClick={(e) => { if (e.target === e.currentTarget) setTabFullscreen(false); }}
+  >
+    <div style={{
+      flex: 1,
+      display: 'flex',
+      flexDirection: 'column',
+      background: '#0d1117',
+      border: '1px solid rgba(88,166,255,0.25)',
+      borderRadius: '14px',
+      overflow: 'hidden',
+      boxShadow: '0 0 0 1px rgba(88,166,255,0.1), 0 32px 80px rgba(0,0,0,0.6)',
+      minHeight: 0,
+    }}>
+
+      {/* ── Modal header ── */}
+      <div style={{
+        display: 'flex',
+        alignItems: 'center',
+        padding: '0 16px',
+        height: '52px',
+        borderBottom: '1px solid rgba(88,166,255,0.15)',
+        background: 'linear-gradient(90deg, rgba(88,166,255,0.06) 0%, transparent 100%)',
+        flexShrink: 0,
+        gap: '6px',
+      }}>
+        {/* Accent bar */}
+        <div style={{ width: '3px', height: '18px', borderRadius: '2px', background: '#58a6ff', flexShrink: 0 }} />
+        <span style={{ fontSize: '14px', flexShrink: 0 }}>🔬</span>
+
+        {/* Tab switcher */}
+        <div style={{ display: 'flex', gap: '2px', flex: 1, overflowX: 'auto' }}>
+          {TABS.map(({ id, label }) => (
+            <button
+              key={id}
+              onClick={() => setActiveTab(id)}
+              style={{
+                padding: '5px 14px',
+                borderRadius: '6px',
+                border: activeTab === id
+                  ? '1px solid rgba(88,166,255,0.45)'
+                  : '1px solid transparent',
+                background: activeTab === id
+                  ? 'rgba(88,166,255,0.14)'
+                  : 'transparent',
+                color: activeTab === id ? '#58a6ff' : '#484f58',
+                fontSize: '11px',
+                fontWeight: '700',
+                cursor: 'pointer',
+                fontFamily: 'IBM Plex Mono, monospace',
+                letterSpacing: '0.4px',
+                whiteSpace: 'nowrap',
+                transition: 'all 0.15s',
+                flexShrink: 0,
+              }}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {/* PASS / FAIL badge */}
+        <span style={{
+          fontSize: '10px',
+          fontFamily: 'IBM Plex Mono, monospace',
+          color: result?.success ? '#3fb950' : '#f85149',
+          background: result?.success ? 'rgba(63,185,80,0.1)' : 'rgba(248,81,73,0.1)',
+          border: `1px solid ${result?.success ? 'rgba(63,185,80,0.3)' : 'rgba(248,81,73,0.3)'}`,
+          borderRadius: '5px',
+          padding: '3px 8px',
+          flexShrink: 0,
+        }}>
+          {result?.success ? '● PASS' : '● FAIL'}
+        </span>
+
+        {/* Close button */}
+        <button
+          type="button"
+          onMouseDown={(e) => { e.stopPropagation(); setTabFullscreen(false); }}
+          style={{
+            padding: '6px 16px',
+            borderRadius: '7px',
+            border: '1px solid rgba(248,81,73,0.4)',
+            background: 'rgba(248,81,73,0.1)',
+            color: '#f85149',
+            fontSize: '12px',
+            fontWeight: '700',
+            cursor: 'pointer',
+            fontFamily: 'IBM Plex Mono, monospace',
+            letterSpacing: '0.3px',
+            flexShrink: 0,
+            transition: 'all 0.2s',
+          }}
+        >
+          ✕ CLOSE
+        </button>
+      </div>
+
+      {/* ── Modal body ── */}
+      <div style={{
+        flex: 1,
+        display: 'flex',
+        flexDirection: 'column',
+        overflow: 'hidden',
+        minHeight: 0,
+        padding: '16px',
+      }}>
+        <div style={{
+          flex: 1,
+          overflow: 'auto',
+          minHeight: 0,
+          height: '100%',
+        }}>
+
+          {activeTab === 'lexical' && (
+            result?.tokens ? (
+              <div className="token-integration">
+                <TokenChart tokens={result.tokens} />
+                <div className="token-action-footer">
+                  <button
+                    onClick={() => { setTabFullscreen(false); setIsTokenDrawerOpen(true); }}
+                    className="view-all-tokens-btn"
+                  >
+                    Open Token Drawer →
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="placeholder-text">Run analysis to view token distribution.</div>
+            )
+          )}
+
+          {activeTab === 'syntactic' && (
+            result?.ast
+              ? <ASTViewer ast={result.ast} />
+              : <div className="placeholder-text">Run analysis to view AST.</div>
+          )}
+
+          {activeTab === 'symbols' && (
+            symbols.length > 0 ? (
+              <table className="symbol-table">
+                <thead>
+                  <tr>
+                    <th>Type</th>
+                    <th>Variable</th>
+                    <th style={{ textAlign: 'right' }}>Line</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {symbols.map((s, i) => (
+                    <tr key={i}>
+                      <td className="symbol-type">{s.type}</td>
+                      <td className="symbol-name">{s.name}</td>
+                      <td className="symbol-line">{s.line}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : (
+              <div className="placeholder-text">No symbols detected.</div>
+            )
+          )}
+
+          {activeTab === 'math' && (
+            <MathTab
+              safetyChecks={result?.safetyChecks}
+              symbolicExecution={result?.symbolicExecution}
+            />
+          )}
+
+          {activeTab === 'logs' && (
+            <LogsTab
+              explanations={result?.explanations}
+              errors={result?.errors}
+              warnings={result?.warnings}
+              success={result?.success}
+              cognitiveComplexity={result?.cognitiveComplexity}
+              cyclomaticComplexity={result?.cyclomaticComplexity}
+            />
+          )}
+
+        </div>
+      </div>
+    </div>
+  </div>
+)}
+
+{/* ── Editor Fullscreen Modal ──────────────────────────────────── */}
+{editorFullscreen && (
+  <div
+    style={{
+      position: 'fixed',
+      inset: 0,
+      zIndex: 9999,
+      background: 'rgba(1,4,9,0.92)',
+      backdropFilter: 'blur(6px)',
+      display: 'flex',
+      flexDirection: 'column',
+      padding: '24px',
+    }}
+    onClick={(e) => { if (e.target === e.currentTarget) setEditorFullscreen(false); }}
+  >
+    <div style={{
+      flex: 1,
+      display: 'flex',
+      flexDirection: 'column',
+      background: '#0d1117',
+      border: '1px solid rgba(63,185,80,0.25)',
+      borderRadius: '14px',
+      overflow: 'hidden',
+      boxShadow: '0 0 0 1px rgba(63,185,80,0.1), 0 32px 80px rgba(0,0,0,0.6)',
+      minHeight: 0,
+    }}>
+
+      {/* Modal header */}
+      <div style={{
+        display: 'flex',
+        alignItems: 'center',
+        padding: '0 16px',
+        height: '52px',
+        borderBottom: '1px solid rgba(63,185,80,0.15)',
+        background: 'linear-gradient(90deg, rgba(63,185,80,0.06) 0%, transparent 100%)',
+        flexShrink: 0,
+        gap: '10px',
+      }}>
+        <div style={{ width: '3px', height: '18px', borderRadius: '2px', background: '#3fb950', flexShrink: 0 }} />
+        <span style={{ fontSize: '14px' }}>📝</span>
+        <span style={{
+          color: '#e6edf3',
+          fontSize: '12px',
+          fontWeight: '700',
+          letterSpacing: '0.5px',
+          fontFamily: 'IBM Plex Mono, monospace',
+          textTransform: 'uppercase',
+          flex: 1,
+        }}>
+          Source Code — Full View
+        </span>
+
+        {/* filename badge */}
+        <span style={{
+          fontSize: '10px',
+          fontFamily: 'IBM Plex Mono, monospace',
+          color: '#8b949e',
+          background: '#1c2128',
+          border: '1px solid #2d333b',
+          borderRadius: '5px',
+          padding: '3px 8px',
+          flexShrink: 0,
+        }}>
+          main.cpp
+        </span>
+
+        {/* Close button */}
+        <button
+          type="button"
+          onMouseDown={(e) => { e.stopPropagation(); setEditorFullscreen(false); }}
+          style={{
+            padding: '6px 16px',
+            borderRadius: '7px',
+            border: '1px solid rgba(248,81,73,0.4)',
+            background: 'rgba(248,81,73,0.1)',
+            color: '#f85149',
+            fontSize: '12px',
+            fontWeight: '700',
+            cursor: 'pointer',
+            fontFamily: 'IBM Plex Mono, monospace',
+            letterSpacing: '0.3px',
+            flexShrink: 0,
+            transition: 'all 0.2s',
+          }}
+        >
+          ✕ CLOSE
+        </button>
+      </div>
+
+      {/* Monaco editor — full height */}
+      <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
+        <CodeEditor
+          code={code}
+          onChange={setCode}
+          onEditorMount={e => (editorRef.current = e)}
+        />
+      </div>
+
+      {/* Analyze button at the bottom */}
+      <div style={{
+        padding: '12px 16px',
+        borderTop: '1px solid rgba(63,185,80,0.15)',
+        background: 'rgba(13,17,23,0.8)',
+        flexShrink: 0,
+        display: 'flex',
+        gap: '10px',
+      }}>
+        <button
+          onClick={() => { setEditorFullscreen(false); handleAnalyze(); }}
+          disabled={isAnalyzing}
+          className="analyze-btn"
+        >
+          {isAnalyzing ? '⟳  Analyzing…' : 'ANALYZE CODE'}
+        </button>
+      </div>
+
+    </div>
+  </div>
+)}
 
       <style>{`
         @keyframes xpFloat {

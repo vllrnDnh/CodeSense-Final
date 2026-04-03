@@ -36,6 +36,10 @@ export class CFGGenerator {
   private currentNodeId = 0;
   private mentor = new Translator();
 
+  // ── FIX 4: Track current function entry node and name for recursion back-edges
+  private currentFunctionEntry: ControlFlowNode | null = null;
+  private currentFunctionName: string = '';
+
   generate(ast: ASTNode): CFG {
     this.nodes = [];
     this.edges = [];
@@ -44,7 +48,20 @@ export class CFGGenerator {
     const startNode = this.createNode('start', 'Start');
     const endNode   = this.createNode('end', 'End');
 
-    this.visit(ast, startNode, endNode);
+    // The visit method returns the last logical node processed in the AST
+    const lastNode = this.visit(ast, startNode, endNode);
+
+    // Final safety connection: Ensures the graph doesn't have "dangling" end statements
+    if (lastNode && lastNode.id !== endNode.id) {
+      const alreadyConnected = this.edges.some(
+        e => e.from === lastNode.id && e.to === endNode.id
+      );
+      
+      if (!alreadyConnected) {
+        this.connect(lastNode, endNode);
+      }
+    }
+
     this.applySugiyamaLayout();
 
     return { nodes: this.nodes, edges: this.edges };
@@ -198,41 +215,40 @@ export class CFGGenerator {
   }
 
   private visit(node: ASTNode, current: ControlFlowNode, exit: ControlFlowNode): ControlFlowNode {
-    if (!node) return current;
+  if (!node) return current;
 
-    // Explicit type guards for stream statements (no method-name dispatch)
-    if (node.type === 'CoutStatement') return this.visitCoutStatement(node as any, current);
-    if (node.type === 'CinStatement')  return this.visitCinStatement(node as any, current);
+  if (node.type === 'CoutStatement') return this.visitCoutStatement(node as any, current);
+  if (node.type === 'CinStatement')  return this.visitCinStatement(node as any, current);
 
-    const methodName = `visit${node.type}`;
-    if (typeof (this as any)[methodName] === 'function') {
-      return (this as any)[methodName](node, current, exit);
-    }
-
-    // Fallback: iterate body/statements arrays
-    const anyNode = node as any;
-    let lastNode = current;
-    if (Array.isArray(anyNode.body)) {
-      anyNode.body.forEach((stmt: ASTNode) => {
-        lastNode = this.visit(stmt, lastNode, exit);
-      });
-    } else if (Array.isArray(anyNode.statements)) {
-      anyNode.statements.forEach((stmt: ASTNode) => {
-        lastNode = this.visit(stmt, lastNode, exit);
-      });
-    }
-    return lastNode;
+  const methodName = `visit${node.type}`;
+  if (typeof (this as any)[methodName] === 'function') {
+    return (this as any)[methodName](node, current, exit);
   }
+
+  // Fallback — but ONLY if no method matched (prevents double-visit)
+  const anyNode = node as any;
+  let lastNode = current;
+  if (Array.isArray(anyNode.body)) {
+    anyNode.body.forEach((stmt: ASTNode) => {
+      lastNode = this.visit(stmt, lastNode, exit);
+    });
+  } else if (Array.isArray(anyNode.statements)) {
+    anyNode.statements.forEach((stmt: ASTNode) => {
+      lastNode = this.visit(stmt, lastNode, exit);
+    });
+  }
+  return lastNode;
+}
 
   // ── Program ───────────────────────────────────────────────────────────────
   private visitProgram(node: any, current: ControlFlowNode, exit: ControlFlowNode): ControlFlowNode {
-    let lastNode = current;
-    (node.body || []).forEach((stmt: ASTNode) => {
-      lastNode = this.visit(stmt, lastNode, exit);
-    });
-    this.connect(lastNode, exit);
-    return exit;
-  }
+  let lastNode = current;
+  (node.body || []).forEach((stmt: ASTNode) => {
+    lastNode = this.visit(stmt, lastNode, exit);
+  });
+  // MISSING: connect last node to exit
+  return lastNode;
+}
 
   // ── If ────────────────────────────────────────────────────────────────────
   private visitIfStatement(
@@ -413,9 +429,18 @@ export class CFGGenerator {
     return step;
   }
 
+  // ── FIX 4: visitFunctionCall — draw a labeled recursive back-edge when
+  //   the call target matches the function we are currently inside.
   private visitFunctionCall(node: any, current: ControlFlowNode): ControlFlowNode {
     const step = this.createNode('process', `Call: ${node.name}`, `${node.name}(...)`, node.line, node);
     this.connect(current, step);
+
+    // If this call targets the current function, add a "Recursive" back-edge
+    // to its entry node so the graph visually shows the self-loop.
+    if (node.name === this.currentFunctionName && this.currentFunctionEntry) {
+      this.connect(step, this.currentFunctionEntry, 'Recursive');
+    }
+
     return step;
   }
 
@@ -433,13 +458,31 @@ export class CFGGenerator {
   }
 
   // ── Functions ─────────────────────────────────────────────────────────────
+
+  // ── FIX 4: visitFunctionDecl — save/restore currentFunctionEntry and
+  //   currentFunctionName so nested function declarations don't clobber
+  //   each other, and recursive calls in the body can find the entry node.
   private visitFunctionDecl(
     node: FunctionDeclNode,
     current: ControlFlowNode,
     exit: ControlFlowNode,
   ): ControlFlowNode {
-    const funcStart = this.createNode('start', `Func: ${node.name}`, `${(node as any).returnType} ${node.name}(...)`, (node as any).line, node);
-    const funcEnd   = this.createNode('end',   `End: ${node.name}`);
+    const funcStart = this.createNode(
+      'start',
+      `Func: ${node.name}`,
+      `${(node as any).returnType} ${node.name}(...)`,
+      (node as any).line,
+      node,
+    );
+    const funcEnd = this.createNode('end', `End: ${node.name}`);
+
+    // Save outer function context before overwriting (supports nested functions)
+    const prevEntry = this.currentFunctionEntry;
+    const prevName  = this.currentFunctionName;
+
+    // Point to this function's entry so visitFunctionCall can find it
+    this.currentFunctionEntry = funcStart;
+    this.currentFunctionName  = node.name;
 
     // Functions are self-contained — connect program flow around them
     // but also build their internal graph from funcStart → funcEnd
@@ -454,6 +497,11 @@ export class CFGGenerator {
     if (lastNode !== funcEnd) {
       this.connect(lastNode, funcEnd);
     }
+
+    // Restore the outer function context (important for nested declarations)
+    this.currentFunctionEntry = prevEntry;
+    this.currentFunctionName  = prevName;
+
     return funcEnd;
   }
 

@@ -6,19 +6,18 @@ import { SignupPage } from './Signuppage';
 import { LoginPage } from './Loginpage'; 
 import { SandboxPage } from './SandboxPage';
 import { LandingPage } from './Landingpage';
-import { ProgressPage } from './Progresspage'
+import { ProgressPage } from './Progresspage';
 import { ProfileSettings } from './ProfileSettings';
 import { LeaderboardPage } from './LeaderboardPage';
 import { WelcomePage } from './WelcomePage';
+import { CampaignPage } from './CampaignPage';
+import CampaignInside from './CampaignInside';
 
-// Real ProtectedRoute logic that checks both authentication and guest status
 const ProtectedRoute: React.FC<{ children: React.ReactElement }> = ({ children }) => {
   const { isAuthenticated, isGuest } = useAuth();
-  
   if (!isAuthenticated && !isGuest) {
     return <Navigate to="/login" replace />;
   }
-  
   return children;
 };
 
@@ -31,44 +30,26 @@ export const App: React.FC = () => {
           <Route path="/" element={<LandingPage />} />
           <Route path="/signup" element={<SignupPage />} />
           <Route path="/login" element={<LoginPage />} />
-
-          {/* Main App Areas */}
-          <Route 
-            path="/home" 
-            element={
-              <ProtectedRoute>
-                <HomeDashboard />
-              </ProtectedRoute>
-            } 
-          />
-          <Route 
-  path="/progress" 
-  element={
-    <ProtectedRoute>
-      <ProgressPage />
-    </ProtectedRoute>
-  } 
-/>
-
-          
-          <Route 
-            path="/sandbox" 
-            element={
-              <ProtectedRoute>
-                <SandboxPage />
-              </ProtectedRoute>
-            } 
-          />
-
-          {/* These redirect back to /home so you stay logged in! */}
-          <Route path="*" element={<Navigate to="/" replace />} />
-          <Route path="/campaign" element={<Navigate to="/home" replace />} />
-          <Route path="/profile" element={<ProfileSettings />} />
-          <Route path="/settings" element={<Navigate to="/home" replace />} />
-          <Route path="/leaderboard" element={<LeaderboardPage />} />
           <Route path="/welcome" element={<WelcomePage />} />
+          <Route path="/leaderboard" element={<LeaderboardPage />} />
 
-          {/* Fallback - Redirect to Landing */}
+          {/* Protected Routes */}
+          <Route path="/home" element={<ProtectedRoute><HomeDashboard /></ProtectedRoute>} />
+          <Route path="/progress" element={<ProtectedRoute><ProgressPage /></ProtectedRoute>} />
+          <Route path="/sandbox" element={<ProtectedRoute><SandboxPage /></ProtectedRoute>} />
+          <Route path="/profile" element={<ProtectedRoute><ProfileSettings /></ProtectedRoute>} />
+
+          {/* Campaign Routes — more specific paths FIRST */}
+          <Route path="/campaign" element={<ProtectedRoute><CampaignPage /></ProtectedRoute>} />
+          <Route path="/campaign/inside" element={<ProtectedRoute><CampaignInside /></ProtectedRoute>} />
+          <Route path="/campaign/inside/:phase" element={<ProtectedRoute><CampaignInside /></ProtectedRoute>} />
+          {/* :phase last, so "inside" isn't swallowed as a param */}
+          <Route path="/campaign/:phase" element={<ProtectedRoute><CampaignPage /></ProtectedRoute>} />
+
+          {/* Redirects */}
+          <Route path="/settings" element={<Navigate to="/home" replace />} />
+
+          {/* Catch-all — ONLY ONE, at the very bottom */}
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </AuthProvider>

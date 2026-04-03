@@ -25,17 +25,21 @@ import {
   UnaryOpNode,
   ArrayAccessNode,
   InitializerListNode,
+  BinaryOpNode,
 } from '../types';
 
 export class Translator {
   private explanations: string[] = [];
   private indentLevel: number = 0;
+  private currentFunctionName: string = '';
 
   private cleanName(name: any): string {
-    if (!name) return 'unknown';
-    const flatName = Array.isArray(name) ? name.flat(Infinity).join('') : String(name);
-    return flatName.replace(/,/g, '').trim();
-  }
+  if (!name) return 'unknown';
+  if (typeof name === 'string') return name;
+  if (name.type === 'Identifier') return name.name;
+  if (Array.isArray(name)) return name.map(n => this.cleanName(n)).join('');
+  return String(name);
+}
 
   private indent(): string {
     return '  '.repeat(this.indentLevel);
@@ -49,20 +53,33 @@ export class Translator {
   }
 
   private visit(node: ASTNode | null | string | undefined): void {
+    // 1. Basic safety check
     if (!node || typeof node === 'string') return;
 
+    // 2. Handle known edge cases where types might be weirdly formatted
+    // (This ensures Cout and Cin are always caught)
     if (node.type === 'CoutStatement') return this.visitCoutStatement(node as any);
     if (node.type === 'CinStatement')  return this.visitCinStatement(node as any);
 
+    // 3. Dynamic Dispatch: Try to find visitIfStatement, visitWhileLoop, etc.
     const methodName = `visit${node.type}`;
+    
     if (typeof (this as any)[methodName] === 'function') {
-      (this as any)[methodName](node);
-    } else if ('body' in node && Array.isArray((node as any).body)) {
-      (node as any).body.forEach((stmt: ASTNode) => this.visit(stmt));
-    } else if ('statements' in node && Array.isArray((node as any).statements)) {
-      (node as any).statements.forEach((stmt: ASTNode) => this.visit(stmt));
+        (this as any)[methodName](node);
+    } 
+    else {
+        // 4. Fallback: If no specific visitor exists, look for children to continue the walk.
+        // C++ ASTs often use 'body', 'statements', or 'declarations'
+        const children = (node as any).body || (node as any).statements || (node as any).declarations;
+
+        if (Array.isArray(children)) {
+            children.forEach((stmt: ASTNode) => this.visit(stmt));
+        } else if (children && typeof children === 'object') {
+            // Handle cases where body is a single node instead of an array
+            this.visit(children);
+        }
     }
-  }
+}
 
   // =========================================================================
   //  PROGRAM STRUCTURE
@@ -113,30 +130,40 @@ export class Translator {
 
   private visitVariableDecl(node: VariableDeclNode): void {
     const name = this.cleanName(node.name);
-    const isConst  = Array.isArray((node as any).modifiers) && (node as any).modifiers.includes('const');
-    const isPtr    = node.varType.includes('*');
-    const isArray  = node.dimensions && node.dimensions.length > 0;
+    const isConst = Array.isArray((node as any).modifiers) && (node as any).modifiers.includes('const');
+    const isPtr   = node.varType.includes('*');
+    const isArray = node.dimensions && node.dimensions.length > 0;
 
+    // 1. Identify the "Storage Type"
     if (isConst) {
-      this.explanations.push(`${this.indent()}❄️ **Frozen Value (Constant): '${name}'** (type: ${node.varType})`);
-      this.explanations.push(`${this.indent()}   Frozen — its value can NEVER change after initialization.`);
+      this.explanations.push(`${this.indent()}❄️ **Constant (Frozen): '${name}'** (type: ${node.varType})`);
+      this.explanations.push(`${this.indent()}   This value is locked! It cannot be changed after this line.`);
     } else if (isPtr) {
       this.explanations.push(`${this.indent()}📌 **Pointer: '${name}'** (type: ${node.varType})`);
-      this.explanations.push(`${this.indent()}   Stores a memory address, not a direct value.`);
+      this.explanations.push(`${this.indent()}   This doesn't store data directly; it stores a **memory address** (like a GPS coordinate) pointing to data elsewhere.`);
     } else if (isArray) {
       const size = node.dimensions?.[0] ? this.formatExpr(node.dimensions[0]) : '?';
       this.explanations.push(`${this.indent()}📦 **Array: '${name}[${size}]'** (element type: ${node.varType})`);
-      this.explanations.push(`${this.indent()}   Like a row of ${size} numbered boxes, each storing one ${node.varType}.`);
+      this.explanations.push(`${this.indent()}   Like a row of ${size} numbered lockers, each holding one ${node.varType}.`);
+      this.explanations.push(`${this.indent()}   💡 *Mentor Tip: Remember that C++ starts counting at locker [0]!*`);
     } else {
-      this.explanations.push(`${this.indent()}📦 **Declare a ${node.varType} variable named '${name}'**`);
+      this.explanations.push(`${this.indent()}📦 **Variable: '${name}'** (type: ${node.varType})`);
     }
 
+    // 2. Handle Initialization (The "Value" part)
     if (node.value) {
       const valueStr = this.formatExpr(node.value);
-      this.explanations.push(`${this.indent()}   Starting value: ${valueStr}`);
+      this.explanations.push(`${this.indent()}   ✨ **Initialization:** The box is starting with the value: ${valueStr}`);
     } else {
-      this.explanations.push(`${this.indent()}   ⚠️  No starting value — box is empty (uninitialized)!`);
+      // Logic for uninitialized variables - a major source of C++ bugs
+      this.explanations.push(`${this.indent()}   ⚠️ **Warning: Uninitialized!**`);
+      this.explanations.push(`${this.indent()}   The box '${name}' is currently empty. In C++, it will contain "garbage data" (random leftovers in memory) until you assign it a value.`);
+      
+      if (isPtr) {
+        this.explanations.push(`${this.indent()}   🛑 **DANGER:** Uninitialized pointers are risky. It's safer to set this to 'nullptr'!`);
+      }
     }
+
     this.explanations.push('');
   }
 
@@ -170,45 +197,67 @@ export class Translator {
   }
 
   private visitFunctionDecl(node: FunctionDeclNode): void {
-    const name   = this.cleanName(node.name);
+    const name = this.cleanName(node.name);
+    const prevFunctionName = this.currentFunctionName;
+    this.currentFunctionName = name;
     const isMain = name === 'main';
 
     if (isMain) {
-      this.explanations.push('');
-      this.explanations.push('🚀 **MAIN FUNCTION — Where Your Program Begins!**');
-      this.explanations.push("   Everything inside runs from top to bottom.");
+        this.explanations.push('🚀 **MAIN FUNCTION**');
+        this.explanations.push('This is the entry point of your program.');
     } else {
-      const params = node.params.map((p: any) =>
-        `${p.varType} ${p.name || '?'}`,
-      ).join(', ');
-      this.explanations.push(`${this.indent()}🔧 **Function: '${name}'**`);
-      this.explanations.push(`${this.indent()}   Inputs: ${params || 'none'}`);
-      this.explanations.push(`${this.indent()}   Returns: ${node.returnType}`);
+        const params = (node.params || []).map((p: any) =>
+            `${p.varType} ${p.name || '?'}`
+        ).join(', ');
+        this.explanations.push(`🔧 **FUNCTION: ${name}**`);
+        this.explanations.push(`• **Inputs:** ${params || 'none'}`);
+        this.explanations.push(`• **Returns:** ${node.returnType}`);
     }
 
-    this.explanations.push('');
-    this.explanations.push(`${this.indent()}▶️  **Steps:**`);
+    this.explanations.push(''); 
+    this.explanations.push('📖 **Walkthrough:**');
+    
     this.indentLevel++;
-    if (node.body && node.body.length > 0) {
-      node.body.forEach(stmt => this.visit(stmt));
+    // Check if body is an array or a single block object
+    const statements = Array.isArray(node.body) ? node.body : (node.body as any)?.statements || [];
+    
+    if (statements.length > 0) {
+        statements.forEach((stmt: ASTNode) => {
+            // This will call visitVariableDecl, visitWhileLoop, etc.
+            // Each of those will add their own emoji-led line.
+            this.visit(stmt); 
+        });
     } else {
-      this.explanations.push(`${this.indent()}(No steps yet)`);
+        this.explanations.push(`${this.indent()}*(Empty function)*`);
     }
     this.indentLevel--;
-    this.explanations.push('');
-  }
+
+    this.currentFunctionName = prevFunctionName;
+}
 
   private visitFunctionCall(node: FunctionCallNode): void {
     const name     = this.cleanName(node.name);
     const argCount = node.arguments?.length || 0;
 
-    this.explanations.push(`${this.indent()}📞 **Call: '${name}'**`);
+     if (name === this.currentFunctionName) {
+    this.explanations.push(`${this.indent()}🔁 **Recursive Call: '${name}'**`);
+    this.explanations.push(`${this.indent()}   This function is calling ITSELF.`);
+    this.explanations.push(`${this.indent()}   ⚠️ Make sure there is a base case, or this will loop forever.`);
     if (argCount > 0) {
       const args = node.arguments.map(a => this.formatExpr(a)).join(', ');
-      this.explanations.push(`${this.indent()}   Arguments: ${args}`);
+      this.explanations.push(`${this.indent()}   Arguments passed: ${args}`);
     }
     this.explanations.push('');
+    return;
   }
+
+  this.explanations.push(`${this.indent()}📞 **Call: '${name}'**`);
+  if (argCount > 0) {
+    const args = node.arguments.map(a => this.formatExpr(a)).join(', ');
+    this.explanations.push(`${this.indent()}   Arguments: ${args}`);
+  }
+  this.explanations.push('');
+}
 
   private visitReturnStatement(node: ReturnStatementNode): void {
     if (node.value) {
@@ -245,20 +294,36 @@ export class Translator {
     this.explanations.push('');
   }
 
+  private visitBinaryOp(node: BinaryOpNode): void {
+    const expr = this.formatExpr(node);
+    // Only add an explanation if it's a significant calculation (not just a simple assignment)
+    if (this.indentLevel > 0) {
+        this.explanations.push(`${this.indent()}🧮 **Calculating:** ${expr}`);
+    }
+  this.visit(node.left);
+  this.visit(node.right);
+}
+
   private visitWhileLoop(node: WhileLoopNode): void {
     const condition = this.formatExpr(node.condition);
-    this.explanations.push(`${this.indent()}🔁 **While Loop**`);
-    this.explanations.push(`${this.indent()}   Keep repeating as long as: ${condition}`);
-    this.explanations.push(`${this.indent()}   💡 Like "Keep stirring while the sauce is lumpy"`);
-    this.explanations.push('');
+    this.explanations.push(`${this.indent()}🔁 **The "Loop-De-Loop" (While Loop)**`);
+    this.explanations.push(`${this.indent()}   1. First, I check: Is **${condition}** true?`);
+    this.explanations.push(`${this.indent()}   2. If YES, I run the code inside.`);
+    this.explanations.push(`${this.indent()}   3. Then I come right back here to check again!`);
 
-    this.explanations.push(`${this.indent()}🔄 **Repeat:**`);
     this.indentLevel++;
-    (node.body || []).forEach(stmt => this.visit(stmt));
+    // Defensive check: handle both Block nodes and raw arrays
+    const statements = (node.body as any)?.statements || node.body;
+    if (Array.isArray(statements)) {
+        statements.forEach(stmt => this.visit(stmt));
+    } else {
+        this.visit(statements);
+    }
     this.indentLevel--;
-    this.explanations.push(`${this.indent()}   ↑ Then check condition again…`);
+    
+    this.explanations.push(`${this.indent()}   ↑ Then check condition again...`);
     this.explanations.push('');
-  }
+}
 
   private visitDoWhileLoop(node: DoWhileLoopNode): void {
     const condition = this.formatExpr(node.condition);
@@ -353,6 +418,7 @@ export class Translator {
     const indices = node.indices.map(i => this.formatExpr(i)).join('][');
     this.explanations.push(`${this.indent()}🔍 **Read Array Element: ${name}[${indices}]**`);
     this.explanations.push(`${this.indent()}   Accessing box number ${indices} inside '${name}'.`);
+    this.explanations.push(`${this.indent()}   💡 Remember: C++ counts from **0**. So [0] is the 1st element, and [1] is the 2nd!`);
     this.explanations.push('');
   }
 
@@ -382,14 +448,35 @@ export class Translator {
   //  INPUT/OUTPUT - Talking to the User
   // =========================================================================
 
-  private visitCoutStatement(node: any): void {
-    const outputs = node.values
-      ? node.values.map((expr: any) => this.formatExpr(expr)).join(' ⟩⟩ ')
-      : 'something';
-    this.explanations.push(`${this.indent()}🖥️  **Output to Screen**`);
-    this.explanations.push(`${this.indent()}   Displays: ${outputs}`);
-    this.explanations.push('');
+  // 1. Add this helper to your Translator class to handle the nested << chain
+private flattenCout(node: any): string[] {
+  if (!node) return [];
+  
+  // If it's a nested BinaryOp (the new structure from the grammar)
+  if (node.type === 'BinaryOp' && node.operator === '<<') {
+    return [
+      ...this.flattenCout(node.left), 
+      ...this.flattenCout(node.right)
+    ];
   }
+  
+  // Base case: it's a single value (string, int, identifier)
+  // Skip the actual word 'cout' or 'std::cout' so it doesn't show in the explanation
+  const val = this.formatExpr(node);
+  if (val === 'cout' || val === 'std::cout') return [];
+  
+  return [val];
+}
+
+// 2. Update the visitCoutStatement to use the helper
+private visitCoutStatement(node: any): void {
+  const items = this.flattenCout(node.values);
+  const outputs = items.length > 0 ? items.join(' ⟩⟩ ') : 'something';
+  
+  this.explanations.push(`${this.indent()}🖥️  **Output to Screen**`);
+  this.explanations.push(`${this.indent()}   Displays: ${outputs}`);
+  this.explanations.push('');
+}
 
   private visitCinStatement(node: any): void {
     const targetNames = node.targets
@@ -468,11 +555,10 @@ export class Translator {
   }
 
   private visitAddressOf(node: UnaryOpNode): void {
-    const v = this.cleanName(node.operand);
-    this.explanations.push(`${this.indent()}📍 **&${v}** — Get the memory address of '${v}'`);
-    this.explanations.push(`${this.indent()}   Like finding which shelf a book is on, not the book itself.`);
-    this.explanations.push('');
-  }
+  const v = this.cleanName(node.operand);
+  this.explanations.push(`${this.indent()}📍 **&${v}** — Finding the Address`);
+  this.explanations.push(`${this.indent()}   Instead of looking at what's inside '${v}', we are looking for its coordinates in memory (like a GPS location).`);
+}
 
   private visitDereference(node: UnaryOpNode): void {
     const v = this.cleanName(node.operand);
@@ -488,14 +574,36 @@ export class Translator {
   private formatExpr(node: any): string {
     if (!node) return '???';
 
+    if (typeof node === 'string') return node;
+
     switch (node.type) {
       case 'BinaryOp': {
-        const left  = this.formatExpr(node.left);
+        const left = this.formatExpr(node.left);
         const right = this.formatExpr(node.right);
-        return `(${left} ${node.operator} ${right})`;
+        let note = '';
+
+        // 1. Map symbols to human-friendly words
+        const opMap: Record<string, string> = { 
+          '&&': 'AND', 
+          '||': 'OR', 
+          '==': 'is equal to',
+          '!=': 'is NOT equal to',
+          '<':  'is less than',
+          '>':  'is greater than',
+          '<=': 'is less than or equal to',
+          '>=': 'is greater than or equal to'
+        };
+        const opLabel = opMap[node.operator] || node.operator;
+
+        // 2. Check for the integer division pitfall
+        if (node.operator === '/' && node.left.type === 'Integer' && node.right.type === 'Integer') {
+          note = ' 💡 (Note: Integer division cuts off decimals!)';
+        }
+
+        return `(${left} ${opLabel} ${right})${note}`;
       }
       case 'Identifier':
-        return this.cleanName(node.name);
+        return node.name || node.value || node.id || 'variable';
       case 'Integer':
         return String(node.value);
       case 'Float':
@@ -553,7 +661,7 @@ export class Translator {
         return `{ ${vals} }`;
       }
       default:
-        return node.type || 'value';
+        return node.name || node.value || String(node);
     }
   }
   // =========================================================================

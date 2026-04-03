@@ -7,7 +7,7 @@
     "clean": "rimraf dist",
     "build:parser": "peggy --format commonjs -o src/analysis/parser.js grammar/cpp.pegjs",
     "build:ts": "tsc -p .",
-    "copy:parser": "shx mkdir -p dist/backend/src/analysis && shx cp src/analysis/parser.js dist/backend/src/analysis/parser.js",
+    "copy:parser": "shx mkdir -p dist/analysis && shx cp src/analysis/parser.js dist/analysis/parser.js",
     "build": "npm run clean && npm run build:parser && npm run build:ts && npm run copy:parser",
     "dev": "ts-node src/server.ts",
     "start": "node dist/backend/src/server.js"

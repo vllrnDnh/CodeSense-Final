@@ -33,7 +33,7 @@ function parseEntry(raw: string, index: number): LogEntry {
   const level: LogLevel =
     raw.includes('❌') || raw.includes('🚨') || raw.includes('Error') ? 'error' :
     raw.includes('⚠️') || raw.includes('WARNING') ? 'warning' :
-    raw.includes('✅') || raw.includes('passed') || raw.includes('success') ? 'success' :
+    raw.includes('✅') || raw.includes('success') || raw.includes('Successful') ? 'success' :
     raw.includes('💡') || raw.includes('→') || raw.includes('Hint') ? 'hint' :
     raw.includes('Status') || raw.includes('Phase') ? 'system' : 'info';
 
