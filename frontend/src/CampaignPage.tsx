@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from './components/AuthScreen'
-import { supabase } from '../src/services/supabase'
+import { supabase } from './services/supabase'
 
 interface LevelInfo {
   id: number
@@ -44,15 +44,13 @@ export const CampaignPage: React.FC = () => {
   const bannerRef = useRef<HTMLDivElement>(null)
   const particleId = useRef(0)
 
-  const userXP = user?.totalXP ?? 0
+  const userXP = (user as any)?.totalXP ?? (user as any)?.totalxp ?? 0
 
   useEffect(() => {
-    // Unlock layout.css overflow
     const els = [document.documentElement, document.body, document.getElementById('root')]
     els.forEach(el => { if (el) { el.style.overflow = 'auto'; el.style.height = 'auto' } })
     setTimeout(() => setVisible(true), 50)
 
-    // Fetch quest counts per phase
     const fetchCounts = async () => {
       const { data } = await supabase
         .from('quests')
@@ -75,10 +73,11 @@ export const CampaignPage: React.FC = () => {
 
   const isLevelUnlocked = (requiredXP: number) => userXP >= requiredXP
 
+  // ── KEY FIX: navigate to /campaign/inside/:phase ──
   const handleLevelClick = (level: LevelInfo) => {
     if (!started) return
     if (!isLevelUnlocked(level.requiredXP)) return
-    navigate(`/campaign/${level.phase}`)
+    navigate(`/campaign/inside/${level.phase}`)
   }
 
   const handleBannerClick = (e: React.MouseEvent) => {
@@ -209,22 +208,17 @@ export const CampaignPage: React.FC = () => {
               transition: 'box-shadow 0.4s ease'
             }}
           >
-            {/* Animated background grid */}
             <div style={{
               position: 'absolute', inset: 0, opacity: 0.07,
               backgroundImage: 'linear-gradient(rgba(227,179,65,0.8) 1px, transparent 1px), linear-gradient(90deg, rgba(227,179,65,0.8) 1px, transparent 1px)',
               backgroundSize: '40px 40px',
               animation: 'drift 12s ease-in-out infinite'
             }} />
-
-            {/* Scanline effect */}
             <div style={{
               position: 'absolute', left: 0, right: 0, height: '2px',
               background: 'linear-gradient(90deg, transparent, rgba(227,179,65,0.3), transparent)',
               animation: 'scanline 4s linear infinite', pointerEvents: 'none'
             }} />
-
-            {/* Corner decorations */}
             {[['0', '0', '0', 'auto'], ['0', 'auto', '0', '0'], ['auto', '0', '0', 'auto'], ['auto', 'auto', '0', '0']].map((pos, i) => (
               <div key={i} style={{
                 position: 'absolute', top: pos[0] === 'auto' ? 'auto' : '12px', bottom: pos[0] === 'auto' ? '12px' : 'auto',
@@ -236,8 +230,6 @@ export const CampaignPage: React.FC = () => {
                 borderRight: (i === 1 || i === 3) ? '2px solid rgba(227,179,65,0.4)' : 'none',
               }} />
             ))}
-
-            {/* Glow orb */}
             <div style={{
               position: 'absolute', top: '50%', left: '50%',
               transform: 'translate(-50%,-50%)',
@@ -248,8 +240,6 @@ export const CampaignPage: React.FC = () => {
               transition: 'background 0.5s ease',
               pointerEvents: 'none'
             }} />
-
-            {/* Click particles */}
             {particles.map(p => (
               <div key={p.id} style={{
                 position: 'absolute', left: p.x, top: p.y,
@@ -259,8 +249,6 @@ export const CampaignPage: React.FC = () => {
                 pointerEvents: 'none'
               }} />
             ))}
-
-            {/* Center content */}
             <div style={{
               position: 'absolute', inset: 0,
               display: 'flex', flexDirection: 'column',
@@ -327,7 +315,6 @@ export const CampaignPage: React.FC = () => {
                   onMouseEnter={() => setHoveredLevel(level.id)}
                   onMouseLeave={() => setHoveredLevel(null)}
                 >
-                  {/* Background glow when active + hovered */}
                   {active && hoveredLevel === level.id && (
                     <div style={{
                       position: 'absolute', inset: 0, borderRadius: '16px',
@@ -335,8 +322,6 @@ export const CampaignPage: React.FC = () => {
                       pointerEvents: 'none'
                     }} />
                   )}
-
-                  {/* Top accent line */}
                   <div style={{
                     position: 'absolute', top: 0, left: '24px', right: '24px', height: '2px',
                     background: active
@@ -345,8 +330,6 @@ export const CampaignPage: React.FC = () => {
                     borderRadius: '0 0 2px 2px',
                     transition: 'background 0.3s'
                   }} />
-
-                  {/* Play icon + title */}
                   <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '6px' }}>
                     <span style={{
                       color: active ? level.color : '#444c56',
@@ -361,8 +344,6 @@ export const CampaignPage: React.FC = () => {
                       {level.title}
                     </span>
                   </div>
-
-                  {/* Subtitle */}
                   <div style={{
                     fontSize: '14px', color: active ? '#8b949e' : '#30363d',
                     marginBottom: '28px', marginLeft: '24px',
@@ -370,8 +351,6 @@ export const CampaignPage: React.FC = () => {
                   }}>
                     {level.subtitle}
                   </div>
-
-                  {/* Quest count */}
                   {active && unlocked && (
                     <div style={{
                       fontSize: '11px', color: level.color, fontFamily: "'IBM Plex Mono', monospace",
@@ -380,8 +359,6 @@ export const CampaignPage: React.FC = () => {
                       {count} {count === 1 ? 'quest' : 'quests'} available
                     </div>
                   )}
-
-                  {/* Lock / Unlock icon */}
                   <div style={{
                     display: 'flex', justifyContent: 'center', alignItems: 'center',
                     height: '56px', marginTop: 'auto'
@@ -407,8 +384,6 @@ export const CampaignPage: React.FC = () => {
                       </div>
                     )}
                   </div>
-
-                  {/* XP requirement badge for locked */}
                   {!unlocked && (
                     <div style={{
                       textAlign: 'center', marginTop: '10px',
@@ -418,8 +393,6 @@ export const CampaignPage: React.FC = () => {
                       Requires {level.requiredXP} XP
                     </div>
                   )}
-
-                  {/* UNLOCKED badge */}
                   {unlocked && active && (
                     <div style={{
                       position: 'absolute', top: '14px', right: '14px',
@@ -436,7 +409,6 @@ export const CampaignPage: React.FC = () => {
             })}
           </div>
 
-          {/* ── Footer hint ── */}
           {!started && (
             <p style={{ textAlign: 'center', marginTop: '32px', color: '#484f58', fontSize: '13px', fontFamily: "'IBM Plex Mono', monospace", letterSpacing: '0.5px' }}>
               Press the banner above to begin your journey
